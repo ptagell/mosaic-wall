@@ -104,11 +104,14 @@
         </span>
         <span class="meta" id="mirrorwrap" style="display:none"><a href="/camera" target="_blank" style="color:var(--accent)">Open camera ↗</a> <span id="camstat"></span></span>
       </div>
+      <p class="hint" id="scenehint" style="margin:6px 2px 0"></p>
       <div id="peoplewrap" style="display:none; margin-top:8px">
         <div class="meta">people in rotation <span id="peopleCount"></span>
-          <button id="peopleAll" class="ghost" style="padding:2px 8px; margin-left:6px">Everyone</button>
+          <button id="peopleAll" class="ghost" style="padding:2px 8px; margin-left:6px" title="Put every named person back in the mix">Everyone</button>
+          <button id="peopleNone" class="ghost" style="padding:2px 8px" title="Clear all ticks so you can pick just a few">None</button>
         </div>
         <div id="peopleList" class="peoplelist"></div>
+        <p class="hint" style="margin:6px 2px 0">None clears the ticks so you can hand-pick a few — the wall keeps its current people until you tick someone. Ticking everyone is the same as Everyone.</p>
       </div>
     </section>
 
@@ -169,7 +172,7 @@
             <button class="scenebtn" data-fx="kenburns">Ken Burns</button>
             <label class="meta">zoom over <input id="kbSec" type="number" min="5" max="90" step="1" style="width:54px"> s</label>
           </div>
-          <span class="hint">slow zoom toward each photo's faces — photo scenes only</span>
+          <span class="hint">slow zoom toward each photo's faces; in split image the whole wall zooms as one picture</span>
         </div>
       </div>
     </section>
@@ -196,7 +199,7 @@
             </label>
             <button class="scenebtn" data-fx="tint">Tint</button>
           </div>
-          <span class="hint">tint washes the wall in a single amber tone</span>
+          <span class="hint">a look colour-grades everything — photos and art alike; tint washes the wall in a single amber tone</span>
         </div>
         <div class="group">
           <span class="gt">Light</span>
@@ -204,7 +207,7 @@
             <button class="scenebtn" data-fx="vignette">Vignette</button>
             <button class="scenebtn" data-fx="nightDim">Night dim</button>
           </div>
-          <span class="hint">night dim softens brightness through the evening, by each tile's clock</span>
+          <span class="hint">vignette darkens the edges; night dim softens brightness through the evening by each tile's clock (independent of the schedule below)</span>
         </div>
         <div class="group">
           <span class="gt">Ambience</span>
@@ -224,7 +227,7 @@
             <label class="meta">density <input id="effectDensity" type="number" min="0.2" max="2" step="0.1" style="width:58px"></label>
             <button class="scenebtn" data-fx="spotlight">Spotlight</button>
           </div>
-          <span class="hint">one particle field spans every tile; spotlight hops tile to tile</span>
+          <span class="hint">a particle field (snow, bokeh, aurora…) drawn over whatever is showing — one continuous field across every tile; density scales how much of it there is; spotlight pulses one tile at a time around the wall</span>
         </div>
       </div>
     </section>
@@ -289,7 +292,33 @@
         <button class="ghost" id="reloadAll" title="Push the latest tile code to every device">Reload all tiles</button>
         <button class="ghost" id="removeOffline" style="margin-left:auto" title="Drop every tile that isn't currently connected">Remove offline</button>
       </div>
+      <p class="hint" style="margin:0 2px 10px">open pages keep their old code across updates — hit <b>Reload all tiles</b> after a new version. <b>Remove offline</b> also forgets names and wall positions of powered-off devices, so use it only for tiles that are truly gone.</p>
       <div class="tiles" id="tiles"><span class="empty">No tiles yet. Open <code>/tile</code> on a device.</span></div>
+    </section>
+
+    <!-- 7 · the quiet behaviours you'd otherwise never discover -->
+    <section>
+      <h2>Good to know</h2>
+      <div class="groups">
+        <div class="group">
+          <span class="gt">On the tiles</span>
+          <span class="hint">· tap any tile to peek at its link status (green dot) and the photo's date &amp; place — or the artwork's name<br>
+          · tiles reconnect on their own after wifi blips and quietly reload every ~6 hours to stay fresh<br>
+          · during scheduled sleep the screens go black and stop rendering; they wake with a fresh reload</span>
+        </div>
+        <div class="group">
+          <span class="gt">Picking photos</span>
+          <span class="hint">· no two tiles ever show the same photo at the same time<br>
+          · recently shown photos rest before they can reappear — within each scene's own pool<br>
+          · small pools (one person with few photos) rotate through everything before repeating</span>
+        </div>
+        <div class="group">
+          <span class="gt">Staying current</span>
+          <span class="hint">· photo pools refresh every hour, so new Immich uploads join without touching this page<br>
+          · “On this day” renews itself at midnight<br>
+          · every setting here is saved instantly and survives restarts</span>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -452,33 +481,52 @@
       document.getElementById('artwrap').style.display = a === 'art' ? '' : 'none';
       document.getElementById('mirrorwrap').style.display = a === 'mirror' ? '' : 'none';
       document.getElementById('peoplewrap').style.display = a === 'different-people' ? '' : 'none';
+      if (a !== 'different-people') peopleNoneMode = false;
       if (a === 'art') renderArtSel();
       if (a === 'mirror') document.getElementById('camstat').textContent = sceneState.camera ? '● camera live' : '○ no camera';
+      // a one-line explainer for the active scene's own controls
+      const SCENE_HINTS = {
+        'random': 'every change, each tile draws a fresh photo — never the same photo on two tiles, and recent ones rest before reappearing',
+        'one-person': 'pick who fills the wall; (auto) takes the first person in your library',
+        'different-people': 'each tile is assigned its own person, round-robin; tick who is in the mix below',
+        'landscapes': 'a smart search for scenery with no people — refreshed hourly like all pools',
+        'on-this-day': 'photos taken on today’s date across past years; the pool renews itself each morning',
+        'favorites': 'everything you’ve starred in Immich',
+        'search': 'smart search understands descriptions, not just tags — try “kids at the beach” or “snow”',
+        'art': '“cycle all” plays a new artwork with new colours every change; pin an artwork and the colours keep rotating; pin colours to hold a mood; speed is how fast the artwork moves, not how often it changes',
+        'split-image': 'one photo spread across the placed tiles like a video wall — bezels and gaps are respected; turn on Ken Burns for a slow wall-wide zoom',
+        'mirror': 'a live camera feed split across the wall; open /camera on any phone or laptop on this network'
+      };
+      document.getElementById('scenehint').textContent = SCENE_HINTS[a] || '';
       // grey out playback controls the active scene ignores
-      const photoScene = !['art', 'mirror', 'split-image'].includes(a);
-      document.getElementById('kbGroup').classList.toggle('dimmed', !photoScene);
-      document.getElementById('transSel').parentElement.classList.toggle('dimmed', !photoScene);
+      const noKb = ['art', 'mirror'].includes(a); // Ken Burns works on photos AND the split wall
+      const noTrans = ['art', 'mirror', 'split-image'].includes(a);
+      document.getElementById('kbGroup').classList.toggle('dimmed', noKb);
+      document.getElementById('transSel').parentElement.classList.toggle('dimmed', noTrans);
       if (a === 'search') { const si = document.getElementById('searchInput'); if (document.activeElement !== si) si.value = (sceneState.config && sceneState.config.query) || ''; }
       if (a === 'different-people') renderPeopleList();
       renderSceneInfo();
     }
     let peopleTimer = null;
+    let peopleNoneMode = false; // "None" clears the ticks locally; nothing posts until a person is ticked
     function renderPeopleList() {
       const box = document.getElementById('peopleList');
       if (document.activeElement && document.activeElement.name === 'person-cb') return; // don't stomp mid-toggle
       const sel = (sceneState.config && sceneState.config.personIds) || [];
       const selSet = {}; sel.forEach(id => selSet[id] = true);
-      const everyone = sel.length === 0;
+      const everyone = sel.length === 0 && !peopleNoneMode;
       box.innerHTML = people.map(p =>
-        '<label><input type="checkbox" name="person-cb" value="' + p.id + '"' + ((everyone || selSet[p.id]) ? ' checked' : '') + '>' + escapeHtml(p.name) + '</label>'
+        '<label><input type="checkbox" name="person-cb" value="' + p.id + '"' + ((!peopleNoneMode && (everyone || selSet[p.id])) ? ' checked' : '') + '>' + escapeHtml(p.name) + '</label>'
       ).join('');
       box.querySelectorAll('input[name="person-cb"]').forEach(cb => cb.addEventListener('change', onPeopleChange));
-      document.getElementById('peopleCount').textContent = (everyone ? people.length : sel.length) + '/' + people.length;
+      document.getElementById('peopleCount').textContent = (peopleNoneMode ? 0 : (everyone ? people.length : sel.length)) + '/' + people.length;
     }
     function onPeopleChange() {
+      peopleNoneMode = false;
       clearTimeout(peopleTimer);
       peopleTimer = setTimeout(() => {
         const checked = [...document.querySelectorAll('input[name="person-cb"]:checked')].map(cb => cb.value);
+        if (!checked.length) { peopleNoneMode = true; renderPeopleList(); return; } // nothing ticked = nothing to show yet
         const everyone = checked.length === people.length;
         j('/api/admin/scene', { scene: 'different-people', personIds: everyone ? [] : checked }).then(applyScenes);
       }, 500);
@@ -610,7 +658,8 @@
     document.getElementById('artSpeed').addEventListener('change', () => { if (sceneState.active === 'art') applyScene('art'); });
     document.getElementById('searchGo').addEventListener('click', () => j('/api/admin/scene', { scene: 'search', query: document.getElementById('searchInput').value }).then(applyScenes));
     document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('searchGo').click(); });
-    document.getElementById('peopleAll').addEventListener('click', () => j('/api/admin/scene', { scene: 'different-people', personIds: [] }).then(applyScenes));
+    document.getElementById('peopleAll').addEventListener('click', () => { peopleNoneMode = false; j('/api/admin/scene', { scene: 'different-people', personIds: [] }).then(applyScenes); });
+    document.getElementById('peopleNone').addEventListener('click', () => { peopleNoneMode = true; renderPeopleList(); });
     document.getElementById('timingSel').addEventListener('change', e => j('/api/admin/timing', { mode: e.target.value }).then(applyScenes));
     document.getElementById('lookSel').addEventListener('change', e => j('/api/admin/display', { look: e.target.value }).then(applyScenes));
     document.getElementById('transSel').addEventListener('change', e => j('/api/admin/display', { transition: e.target.value }).then(applyScenes));
