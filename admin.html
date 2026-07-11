@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mosaic Wall — Admin</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0e1116; --card:#171c24; --card2:#1f2732; --line:#28303c; --ink:#e7ecf3; --ink2:#9aa7b6; --accent:#35c7e6; --amber:#e3a758; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+    header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+    h1 { font-size:1.05rem; margin:0; font-weight:700; }
+    h2 { font-size:0.74rem; letter-spacing:0.12em; text-transform:uppercase; color:var(--ink2); margin:0 0 10px; font-family:ui-monospace,Menlo,Consolas,monospace; }
+    .meta { color:var(--ink2); font-size:0.82rem; font-family:ui-monospace,Menlo,Consolas,monospace; }
+    main { padding:18px 20px 40px; max-width:1180px; margin:0 auto; display:grid; gap:22px; }
+    button, select, input { font:inherit; color:var(--ink); background:var(--card2); border:1px solid var(--line); border-radius:7px; padding:6px 9px; }
+    button { cursor:pointer; } button:hover { border-color:var(--accent); }
+    button.primary { background:var(--accent); color:#04202a; border-color:var(--accent); font-weight:650; }
+    button.ghost { background:transparent; }
+    .bar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+
+    /* scene switcher */
+    .scenebtns { display:flex; gap:6px; flex-wrap:wrap; }
+    .scenebtn { background:var(--card2); border:1px solid var(--line); border-radius:999px; padding:6px 14px; cursor:pointer; }
+    .scenebtn:hover { border-color:var(--accent); }
+    .scenebtn.active { background:var(--accent); color:#04202a; border-color:var(--accent); font-weight:650; }
+    .peoplelist { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:3px 14px; max-height:160px; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:9px 11px; background:var(--card); margin-top:5px; }
+    .peoplelist label { display:flex; gap:6px; align-items:center; color:var(--ink); font-size:0.82rem; cursor:pointer; }
+    .peoplelist input { width:auto; }
+
+    /* placement canvas */
+    .wall { position:relative; width:100%; height:56vh; min-height:320px; background:
+        repeating-linear-gradient(0deg, transparent 0 39px, #ffffff08 39px 40px),
+        repeating-linear-gradient(90deg, transparent 0 39px, #ffffff08 39px 40px), var(--card);
+      border:1px solid var(--line); border-radius:12px; overflow:hidden; touch-action:none; }
+    .ptile { position:absolute; border:1.5px solid var(--accent); background:#12313a; border-radius:5px; cursor:grab;
+      display:flex; align-items:center; justify-content:center; text-align:center; overflow:hidden;
+      color:var(--ink); font-size:12px; padding:3px; user-select:none; box-shadow:0 2px 8px #0006; }
+    .ptile.landscape { border-color:var(--amber); background:#33290f; }
+    .ptile.dragging { cursor:grabbing; opacity:0.9; z-index:10; }
+    .ptile .nm { font-weight:600; pointer-events:none; }
+    .ptile .sz { color:var(--ink2); font-size:10px; font-family:ui-monospace,Menlo,Consolas,monospace; pointer-events:none; }
+    .ptile.off { opacity:0.45; border-style:dashed; }
+
+    /* tile controls */
+    .tiles { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); }
+    .tc { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:11px 13px; display:flex; flex-direction:column; gap:8px; }
+    .tc .top { display:flex; align-items:center; gap:8px; }
+    .status { width:9px; height:9px; border-radius:50%; flex:none; } .status.on { background:#3ad07a; } .status.off { background:#d05a5a; }
+    .tc input.name { flex:1; min-width:80px; }
+    .tc .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .tc label { color:var(--ink2); font-size:0.78rem; display:inline-flex; gap:5px; align-items:center; }
+    .tc .idline { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:0.68rem; color:var(--ink2); word-break:break-all; }
+    .tc .dim { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:0.72rem; color:var(--ink2); }
+    .pill { font-size:0.68rem; font-family:ui-monospace,Menlo,Consolas,monospace; padding:1px 6px; border-radius:999px; border:1px solid var(--line); color:var(--ink2); }
+    .pill.port { color:var(--accent); border-color:var(--accent); } .pill.land { color:var(--amber); border-color:var(--amber); }
+    .empty { color:var(--ink2); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Mosaic Wall — Admin</h1>
+    <span class="meta" id="summary">…</span>
+    <span class="meta" style="margin-left:auto">Free-form layout · drag to place</span>
+  </header>
+  <main>
+    <section>
+      <h2>Scene</h2>
+      <div class="bar">
+        <div class="scenebtns" id="scenebtns"></div>
+        <label class="meta" id="personwrap" style="display:none">person
+          <select id="personSel"></select>
+        </label>
+        <label class="meta" id="searchwrap" style="display:none">search
+          <input id="searchInput" type="text" placeholder="e.g. sunset over water" style="min-width:220px">
+          <button id="searchGo">Go</button>
+        </label>
+        <span id="artwrap" style="display:none">
+          <label class="meta">artwork
+            <select id="artSel"><option value="">cycle all</option></select>
+          </label>
+          <label class="meta">colours
+            <select id="artPalSel"><option value="">cycle</option></select>
+          </label>
+          <label class="meta">speed <input id="artSpeed" type="number" min="0.25" max="3" step="0.25" style="width:58px" value="1">×</label>
+        </span>
+        <span class="meta" id="mirrorwrap" style="display:none"><a href="/camera" target="_blank" style="color:var(--accent)">Open camera ↗</a> <span id="camstat"></span></span>
+        <span class="meta" id="sceneinfo" style="margin-left:auto"></span>
+      </div>
+      <p class="meta" id="scenedesc" style="margin:8px 2px 0"></p>
+      <div id="peoplewrap" style="display:none; margin-top:8px">
+        <div class="meta">people in rotation <span id="peopleCount"></span>
+          <button id="peopleAll" class="ghost" style="padding:2px 8px; margin-left:6px">Everyone</button>
+        </div>
+        <div id="peopleList" class="peoplelist"></div>
+      </div>
+      <div class="bar" style="margin-top:12px">
+        <label class="meta">look
+          <select id="lookSel">
+            <option value="none">normal</option>
+            <option value="grayscale">black &amp; white</option>
+            <option value="sepia">sepia</option>
+            <option value="warm">warm</option>
+            <option value="punch">punch</option>
+            <option value="noir">noir</option>
+          </select>
+        </label>
+        <label class="meta">transition
+          <select id="transSel">
+            <option value="fade">fade</option>
+            <option value="slide">slide</option>
+            <option value="zoom">zoom</option>
+            <option value="random">random</option>
+          </select>
+        </label>
+        <label class="meta">fade <input id="transSec" type="number" min="0" max="6" step="0.1" style="width:58px"> s</label>
+        <button class="scenebtn" data-fx="kenburns">Ken Burns</button>
+        <label class="meta">for <input id="kbSec" type="number" min="5" max="90" step="1" style="width:54px"> s</label>
+        <button class="scenebtn" data-fx="vignette">Vignette</button>
+        <button class="scenebtn" data-fx="tint">Tint</button>
+        <button class="scenebtn" data-fx="nightDim">Night dim</button>
+      </div>
+      <div class="bar" style="margin-top:8px">
+        <label class="meta">timing
+          <select id="timingSel">
+            <option value="sync">in sync</option>
+            <option value="stagger">staggered</option>
+            <option value="wave">wave</option>
+          </select>
+        </label>
+        <label class="meta">change every <input id="slideSec" type="number" min="2" max="600" step="1" style="width:64px"> s</label>
+        <button class="scenebtn" data-fx="spotlight">Spotlight</button>
+        <span class="meta">effects apply to the whole wall</span>
+        <button class="ghost" id="reloadAll" style="margin-left:auto" title="Push the latest tile code to every device">Reload all tiles</button>
+      </div>
+      <div class="bar" style="margin-top:8px">
+        <label class="meta">artistic effect
+          <select id="effectSel">
+            <option value="none">none</option>
+            <option value="bokeh">bokeh</option>
+            <option value="snow">snow</option>
+            <option value="embers">embers</option>
+            <option value="stars">starfield</option>
+            <option value="network">constellation</option>
+            <option value="aurora">aurora</option>
+            <option value="glass">liquid glass</option>
+          </select>
+        </label>
+        <label class="meta">density <input id="effectDensity" type="number" min="0.2" max="2" step="0.1" style="width:58px"></label>
+        <span class="meta">a wall-wide field drawn across every tile</span>
+      </div>
+    </section>
+
+    <section>
+      <div class="bar" style="margin-bottom:10px">
+        <h2 style="margin:0">Wall placement</h2>
+        <span class="meta" id="wallsize"></span>
+        <label class="meta">shown width
+          <select id="zoom">
+            <option value="1000">1 m</option>
+            <option value="1800">1.8 m</option>
+            <option value="2500" selected>2.5 m</option>
+            <option value="4000">4 m</option>
+          </select>
+        </label>
+        <button class="ghost" id="showRandom" style="margin-left:auto">Refresh all now</button>
+      </div>
+      <div class="wall" id="wall"></div>
+      <p class="meta" style="margin:8px 2px 0">Drag placed tiles to match the real arrangement. Tiles with no model or position appear below; set a model and hit <b>Place on wall</b>.</p>
+    </section>
+
+    <section>
+      <div class="bar" style="margin-bottom:10px">
+        <h2 style="margin:0">Tiles</h2>
+        <button class="ghost" id="removeOffline" style="margin-left:auto" title="Drop every tile that isn't currently connected">Remove offline</button>
+      </div>
+      <div class="tiles" id="tiles"><span class="empty">No tiles yet. Open <code>/tile</code> on a device.</span></div>
+    </section>
+  </main>
+
+  <script>
+    const state = { tiles: [], wall: null };
+    const sceneState = { scenes: [], active: 'random', config: {}, info: {}, timing: 'sync', display: { look: 'none', transition: 'fade' } };
+    const FX = ['kenburns', 'vignette', 'tint', 'nightDim', 'spotlight'];
+    let people = [];
+    let modelsList = [];
+    let dragging = null;      // { id, grabDx, grabDy, el }
+    let scale = 0.2;          // px per mm
+    let wallMmW = 2500;
+
+    const j = (path, body) => fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}).then(r => r.json());
+
+    function recomputeScale() {
+      const w = document.getElementById('wall').clientWidth || 800;
+      scale = w / wallMmW;
+    }
+
+    function renderWall() {
+      const wall = document.getElementById('wall');
+      // preserve the element being dragged
+      wall.querySelectorAll('.ptile').forEach(el => { if (!dragging || el.dataset.id !== dragging.id) el.remove(); });
+      state.tiles.forEach(t => {
+        if (!t.place || !t.screenMm) return;
+        if (dragging && dragging.id === t.id) return; // don't stomp the live drag
+        const el = document.createElement('div');
+        el.className = 'ptile ' + (t.orientation === 'landscape' ? 'landscape' : 'portrait') + (t.online ? '' : ' off');
+        el.dataset.id = t.id;
+        el.style.left = (t.place.x * scale) + 'px';
+        el.style.top = (t.place.y * scale) + 'px';
+        el.style.width = (t.screenMm.w * scale) + 'px';
+        el.style.height = (t.screenMm.h * scale) + 'px';
+        el.innerHTML = '<div><div class="nm">' + escapeHtml(t.name) + '</div><div class="sz">' + Math.round(t.screenMm.w) + '×' + Math.round(t.screenMm.h) + 'mm</div></div>';
+        el.addEventListener('pointerdown', startDrag);
+        wall.appendChild(el);
+      });
+      document.getElementById('wallsize').textContent = state.wall
+        ? ('wall ≈ ' + Math.round(state.wall.w) + ' × ' + Math.round(state.wall.h) + ' mm')
+        : '';
+    }
+
+    function startDrag(e) {
+      const el = e.currentTarget;
+      const id = el.dataset.id;
+      const wallRect = document.getElementById('wall').getBoundingClientRect();
+      dragging = { id, el, grabDx: e.clientX - (wallRect.left + parseFloat(el.style.left)), grabDy: e.clientY - (wallRect.top + parseFloat(el.style.top)) };
+      el.classList.add('dragging');
+      el.setPointerCapture(e.pointerId);
+      el.addEventListener('pointermove', onDrag);
+      el.addEventListener('pointerup', endDrag);
+      el.addEventListener('pointercancel', endDrag);
+    }
+    function onDrag(e) {
+      if (!dragging) return;
+      const wallRect = document.getElementById('wall').getBoundingClientRect();
+      let x = e.clientX - wallRect.left - dragging.grabDx;
+      let y = e.clientY - wallRect.top - dragging.grabDy;
+      x = Math.max(0, x); y = Math.max(0, y);
+      dragging.el.style.left = x + 'px';
+      dragging.el.style.top = y + 'px';
+    }
+    function endDrag(e) {
+      if (!dragging) return;
+      const el = dragging.el;
+      el.classList.remove('dragging');
+      el.removeEventListener('pointermove', onDrag);
+      const x = parseFloat(el.style.left) / scale;
+      const y = parseFloat(el.style.top) / scale;
+      const id = dragging.id;
+      dragging = null;
+      j('/api/admin/tile', { id, place: { x, y } }).then(apply);
+    }
+
+    function modelOptions(sel) {
+      let html = '<option value="">— model —</option>';
+      modelsList.forEach(m => { html += '<option value="' + m.key + '"' + (sel === m.key ? ' selected' : '') + '>' + m.name + '</option>'; });
+      return html;
+    }
+
+    function renderTiles() {
+      const el = document.getElementById('tiles');
+      if (!state.tiles.length) { el.innerHTML = '<span class="empty">No tiles yet. Open <code>/tile</code> on a device.</span>'; return; }
+      el.innerHTML = '';
+      state.tiles.forEach(t => {
+        const card = document.createElement('div');
+        card.className = 'tc';
+        const placed = !!t.place;
+        card.innerHTML =
+          '<div class="top"><span class="status ' + (t.online ? 'on' : 'off') + '"></span>' +
+            '<input class="name" value="' + escapeHtml(t.name) + '">' +
+            '<span class="pill ' + (t.orientation === 'landscape' ? 'land' : 'port') + '">' + t.orientation + '</span>' +
+            '<button class="save">Save</button></div>' +
+          '<div class="idline">' + t.id + ' · native ' + t.nativeW + '×' + t.nativeH + '</div>' +
+          '<div class="row"><label>model <select class="model">' + modelOptions(t.model) + '</select></label>' +
+            '<span class="dim">' + (t.screenMm ? (Math.round(t.screenMm.w) + '×' + Math.round(t.screenMm.h) + 'mm') : 'set a model') + '</span></div>' +
+          '<div class="row"><label>orient <select class="orient">' +
+            '<option value="auto"' + (t.orientationSetting === 'auto' ? ' selected' : '') + '>auto (' + (t.detectedOrientation || '?') + ')</option>' +
+            '<option value="portrait"' + (t.orientationSetting === 'portrait' ? ' selected' : '') + '>portrait</option>' +
+            '<option value="landscape"' + (t.orientationSetting === 'landscape' ? ' selected' : '') + '>landscape</option>' +
+            '</select></label>' +
+            '<button class="ident">Identify</button>' +
+            '<button class="place">' + (placed ? 'Remove from wall' : 'Place on wall') + '</button>' +
+            '<button class="remove">Remove</button></div>';
+
+        card.querySelector('.save').addEventListener('click', () => j('/api/admin/tile', { id: t.id, name: card.querySelector('.name').value }).then(apply));
+        card.querySelector('.model').addEventListener('change', e => j('/api/admin/tile', { id: t.id, model: e.target.value }).then(apply));
+        card.querySelector('.orient').addEventListener('change', e => j('/api/admin/tile', { id: t.id, orientation: e.target.value }).then(apply));
+        card.querySelector('.ident').addEventListener('click', () => j('/api/admin/identify', { id: t.id }));
+        card.querySelector('.place').addEventListener('click', () => {
+          if (placed) { j('/api/admin/tile', { id: t.id, place: null }).then(apply); }
+          else if (!t.model) { alert('Pick a model first so the tile has a physical size.'); }
+          else { j('/api/admin/tile', { id: t.id, place: nextFreeSpot() }).then(apply); }
+        });
+        card.querySelector('.remove').addEventListener('click', () => {
+          if (confirm('Remove "' + t.name + '" from the list?')) j('/api/admin/removeTile', { id: t.id }).then(apply);
+        });
+        el.appendChild(card);
+      });
+    }
+
+    function nextFreeSpot() {
+      // stagger new placements so they don't stack exactly
+      const n = state.tiles.filter(t => t.place).length;
+      return { x: 40 + (n % 5) * 180, y: 40 + Math.floor(n / 5) * 240 };
+    }
+
+    function apply(s) {
+      if (!s || !s.tiles) return;
+      state.tiles = s.tiles; state.wall = s.wall;
+      const online = state.tiles.filter(t => t.online).length;
+      const placed = state.tiles.filter(t => t.place).length;
+      document.getElementById('summary').textContent = state.tiles.length + ' tiles · ' + online + ' online · ' + placed + ' placed';
+      recomputeScale();
+      renderWall();
+      renderTiles();
+    }
+
+    function escapeHtml(s) { return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+    function refresh() { j('/api/admin/state').then(apply).catch(() => {}); }
+
+    /* ---- scene switcher ---- */
+    function renderScenes() {
+      const wrap = document.getElementById('scenebtns');
+      wrap.innerHTML = '';
+      sceneState.scenes.forEach(s => {
+        const b = document.createElement('button');
+        b.className = 'scenebtn' + (s.key === sceneState.active ? ' active' : '');
+        b.textContent = s.label;
+        b.title = s.desc || '';
+        b.addEventListener('click', () => applyScene(s.key));
+        wrap.appendChild(b);
+      });
+      const cur = sceneState.scenes.find(s => s.key === sceneState.active) || {};
+      const a = sceneState.active;
+      document.getElementById('scenedesc').textContent = cur.desc || '';
+      document.getElementById('personwrap').style.display = a === 'one-person' ? '' : 'none';
+      document.getElementById('searchwrap').style.display = a === 'search' ? '' : 'none';
+      document.getElementById('artwrap').style.display = a === 'art' ? '' : 'none';
+      document.getElementById('mirrorwrap').style.display = a === 'mirror' ? '' : 'none';
+      document.getElementById('peoplewrap').style.display = a === 'different-people' ? '' : 'none';
+      if (a === 'art') renderArtSel();
+      if (a === 'mirror') document.getElementById('camstat').textContent = sceneState.camera ? '● camera live' : '○ no camera';
+      if (a === 'search') { const si = document.getElementById('searchInput'); if (document.activeElement !== si) si.value = (sceneState.config && sceneState.config.query) || ''; }
+      if (a === 'different-people') renderPeopleList();
+      renderSceneInfo();
+    }
+    let peopleTimer = null;
+    function renderPeopleList() {
+      const box = document.getElementById('peopleList');
+      if (document.activeElement && document.activeElement.name === 'person-cb') return; // don't stomp mid-toggle
+      const sel = (sceneState.config && sceneState.config.personIds) || [];
+      const selSet = {}; sel.forEach(id => selSet[id] = true);
+      const everyone = sel.length === 0;
+      box.innerHTML = people.map(p =>
+        '<label><input type="checkbox" name="person-cb" value="' + p.id + '"' + ((everyone || selSet[p.id]) ? ' checked' : '') + '>' + escapeHtml(p.name) + '</label>'
+      ).join('');
+      box.querySelectorAll('input[name="person-cb"]').forEach(cb => cb.addEventListener('change', onPeopleChange));
+      document.getElementById('peopleCount').textContent = (everyone ? people.length : sel.length) + '/' + people.length;
+    }
+    function onPeopleChange() {
+      clearTimeout(peopleTimer);
+      peopleTimer = setTimeout(() => {
+        const checked = [...document.querySelectorAll('input[name="person-cb"]:checked')].map(cb => cb.value);
+        const everyone = checked.length === people.length;
+        j('/api/admin/scene', { scene: 'different-people', personIds: everyone ? [] : checked }).then(applyScenes);
+      }, 500);
+    }
+    const ART_LABELS = { plasma: 'plasma', lava: 'lava lamp', kaleido: 'kaleidoscope', julia: 'fractal (Julia)', tunnel: 'tunnel', waves: 'silk waves', flow: 'flow field', phyllo: 'bloom (phyllotaxis)', spiro: 'spirograph', metaballs: 'lava blobs' };
+    const PAL_LABELS = ['spectrum', 'sunset', 'ocean', 'vaporwave', 'orchid', 'fire & gold'];
+    function renderArtSel() {
+      const cfg = sceneState.config || {};
+      const sel = document.getElementById('artSel');
+      if (document.activeElement !== sel) {
+        const arts = sceneState.artworks || [];
+        const cur = cfg.artwork || '';
+        sel.innerHTML = '<option value="">cycle all</option>' +
+          arts.map(a => '<option value="' + a + '"' + (cur === a ? ' selected' : '') + '>' + (ART_LABELS[a] || a) + '</option>').join('');
+      }
+      const pal = document.getElementById('artPalSel');
+      if (document.activeElement !== pal) {
+        const n = sceneState.artPalettes || PAL_LABELS.length;
+        const curPal = (typeof cfg.artPalette === 'number') ? String(cfg.artPalette) : '';
+        let opts = '<option value="">cycle</option>';
+        for (let i = 0; i < n; i++) opts += '<option value="' + i + '"' + (curPal === String(i) ? ' selected' : '') + '>' + (PAL_LABELS[i] || 'palette ' + (i + 1)) + '</option>';
+        pal.innerHTML = opts;
+      }
+      const spd = document.getElementById('artSpeed');
+      if (document.activeElement !== spd) spd.value = (typeof cfg.artSpeed === 'number') ? cfg.artSpeed : 1;
+    }
+    function renderPersonSel() {
+      const sel = document.getElementById('personSel');
+      sel.innerHTML = '<option value="">(auto — first person)</option>' +
+        people.map(p => '<option value="' + p.id + '"' + (sceneState.config.personId === p.id ? ' selected' : '') + '>' + escapeHtml(p.name) + '</option>').join('');
+    }
+    function renderSceneInfo() {
+      const i = sceneState.info || {};
+      const a = sceneState.active;
+      let txt = '';
+      if (a === 'one-person') txt = i.personName ? (i.personName + ' · ' + (i.count || 0) + ' photos') : '';
+      else if (a === 'different-people') txt = (i.peopleCount || 0) + ' people in rotation';
+      else if (a === 'landscapes') txt = (i.count || 0) + ' landscape matches';
+      else if (a === 'favorites') txt = (i.count || 0) + ' favourites';
+      else if (a === 'search') txt = i.query ? ((i.count || 0) + ' matches for “' + i.query + '”') : 'type a query and hit Go';
+      else if (a === 'art') txt = i.artwork ? ('showing “' + (ART_LABELS[i.artwork] || i.artwork) + '”') : 'cycling all artworks';
+      else if (a === 'mirror') txt = sceneState.camera ? 'live camera feed' : 'open /camera to start the feed';
+      else if (i.count != null) txt = (i.count || 0) + ' photos in pool';
+      document.getElementById('sceneinfo').textContent = txt;
+    }
+    function applyScene(key) {
+      const body = { scene: key };
+      if (key === 'one-person') { const pid = document.getElementById('personSel').value; if (pid) body.personId = pid; }
+      else if (key === 'search') { const q = document.getElementById('searchInput').value; if (q) body.query = q; }
+      else if (key === 'art') { // '' = cycle
+        body.artwork = document.getElementById('artSel').value;
+        body.artPalette = document.getElementById('artPalSel').value;
+        body.artSpeed = parseFloat(document.getElementById('artSpeed').value) || 1;
+      }
+      j('/api/admin/scene', body).then(applyScenes);
+    }
+    function applyScenes(s) {
+      if (!s || !s.scenes) return;
+      sceneState.scenes = s.scenes; sceneState.active = s.active; sceneState.config = s.config || {}; sceneState.info = s.info || {};
+      if (s.timing) sceneState.timing = s.timing;
+      if (s.artworks) sceneState.artworks = s.artworks;
+      if (s.artPalettes) sceneState.artPalettes = s.artPalettes;
+      if (s.display) sceneState.display = s.display;
+      if (typeof s.slideSec === 'number') sceneState.slideSec = s.slideSec;
+      sceneState.camera = !!s.camera;
+      renderScenes();
+      renderDisplay();
+    }
+    function renderDisplay() {
+      const d = sceneState.display || {};
+      const setSel = (id, val) => { const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = val; };
+      setSel('timingSel', sceneState.timing);
+      setSel('lookSel', d.look || 'none');
+      setSel('transSel', d.transition || 'fade');
+      setSel('slideSec', sceneState.slideSec != null ? sceneState.slideSec : 15);
+      setSel('transSec', d.transitionSec != null ? d.transitionSec : 1.2);
+      setSel('kbSec', d.kenburnsSec != null ? d.kenburnsSec : 22);
+      setSel('effectSel', d.effect || 'none');
+      setSel('effectDensity', d.effectDensity != null ? d.effectDensity : 1);
+      FX.forEach(fx => { const b = document.querySelector('[data-fx="' + fx + '"]'); if (b) b.className = 'scenebtn' + (d[fx] ? ' active' : ''); });
+    }
+    function refreshScenes() { j('/api/admin/scenes').then(applyScenes).catch(() => {}); }
+
+    document.getElementById('zoom').addEventListener('change', e => { wallMmW = parseInt(e.target.value, 10); recomputeScale(); renderWall(); });
+    document.getElementById('showRandom').addEventListener('click', () => j('/api/admin/showRandom'));
+    document.getElementById('personSel').addEventListener('change', () => { if (sceneState.active === 'one-person') applyScene('one-person'); });
+    document.getElementById('artSel').addEventListener('change', () => { if (sceneState.active === 'art') applyScene('art'); });
+    document.getElementById('artPalSel').addEventListener('change', () => { if (sceneState.active === 'art') applyScene('art'); });
+    document.getElementById('artSpeed').addEventListener('change', () => { if (sceneState.active === 'art') applyScene('art'); });
+    document.getElementById('searchGo').addEventListener('click', () => j('/api/admin/scene', { scene: 'search', query: document.getElementById('searchInput').value }).then(applyScenes));
+    document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('searchGo').click(); });
+    document.getElementById('peopleAll').addEventListener('click', () => j('/api/admin/scene', { scene: 'different-people', personIds: [] }).then(applyScenes));
+    document.getElementById('timingSel').addEventListener('change', e => j('/api/admin/timing', { mode: e.target.value }).then(applyScenes));
+    document.getElementById('lookSel').addEventListener('change', e => j('/api/admin/display', { look: e.target.value }).then(applyScenes));
+    document.getElementById('transSel').addEventListener('change', e => j('/api/admin/display', { transition: e.target.value }).then(applyScenes));
+    document.getElementById('slideSec').addEventListener('change', e => j('/api/admin/timing', { slideSec: parseFloat(e.target.value) }).then(applyScenes));
+    document.getElementById('transSec').addEventListener('change', e => j('/api/admin/display', { transitionSec: parseFloat(e.target.value) }).then(applyScenes));
+    document.getElementById('kbSec').addEventListener('change', e => j('/api/admin/display', { kenburnsSec: parseFloat(e.target.value) }).then(applyScenes));
+    document.getElementById('effectSel').addEventListener('change', e => j('/api/admin/display', { effect: e.target.value }).then(applyScenes));
+    document.getElementById('effectDensity').addEventListener('change', e => j('/api/admin/display', { effectDensity: parseFloat(e.target.value) }).then(applyScenes));
+    document.querySelectorAll('[data-fx]').forEach(b => b.addEventListener('click', () => {
+      const fx = b.getAttribute('data-fx');
+      const patch = {}; patch[fx] = !((sceneState.display || {})[fx]);
+      j('/api/admin/display', patch).then(applyScenes);
+    }));
+    document.getElementById('reloadAll').addEventListener('click', () => {
+      const b = document.getElementById('reloadAll');
+      j('/api/admin/reloadAll', {}).then(r => { b.textContent = 'Reloaded ' + ((r && r.reloaded) || 0); setTimeout(() => { b.textContent = 'Reload all tiles'; }, 2500); });
+    });
+    document.getElementById('removeOffline').addEventListener('click', () => {
+      const off = state.tiles.filter(t => !t.online).length;
+      if (!off) { alert('No offline tiles to remove.'); return; }
+      if (!confirm('Remove ' + off + ' offline tile' + (off === 1 ? '' : 's') + ' from the list?')) return;
+      j('/api/admin/removeOffline', {}).then(apply);
+    });
+    window.addEventListener('resize', () => { recomputeScale(); renderWall(); });
+
+    j('/api/models').then(d => { modelsList = d.models || []; refresh(); });
+    j('/api/people').then(d => { people = (d && d.people) || []; renderPersonSel(); }).catch(() => {});
+    refreshScenes();
+    // poll, but never while dragging or editing a field
+    setInterval(() => {
+      if (dragging || /INPUT|SELECT/.test((document.activeElement || {}).tagName || '')) return;
+      refresh(); refreshScenes();
+    }, 3000);
+  </script>
+</body>
+</html>

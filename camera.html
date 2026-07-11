@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mosaic Wall — Camera</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0e1116; --card:#171c24; --line:#28303c; --ink:#e7ecf3; --ink2:#9aa7b6; --accent:#35c7e6; --bad:#e36868; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; background:var(--bg); color:var(--ink);
+      font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      display:flex; flex-direction:column; align-items:center; gap:16px; padding:22px; }
+    h1 { font-size:1.05rem; margin:0; font-weight:700; }
+    .wrap { width:100%; max-width:560px; display:flex; flex-direction:column; gap:14px; }
+    .stage { position:relative; background:#000; border:1px solid var(--line); border-radius:12px; overflow:hidden; aspect-ratio:4/3; }
+    video { width:100%; height:100%; object-fit:cover; display:block; transform:scaleX(-1); }
+    .dot { position:absolute; top:10px; left:10px; width:10px; height:10px; border-radius:50%; background:var(--bad); box-shadow:0 0 0 3px #0006; }
+    .dot.on { background:#3ad07a; }
+    .bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    button, select { font:inherit; color:var(--ink); background:#1f2732; border:1px solid var(--line); border-radius:8px; padding:8px 12px; cursor:pointer; }
+    button.primary { background:var(--accent); color:#04202a; border-color:var(--accent); font-weight:650; }
+    button:hover { border-color:var(--accent); }
+    .meta { color:var(--ink2); font-size:0.86rem; }
+    .note { color:var(--ink2); font-size:0.82rem; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:11px 13px; }
+    code { font-family:ui-monospace,Menlo,Consolas,monospace; color:var(--ink); }
+    .err { color:var(--bad); }
+  </style>
+</head>
+<body>
+  <h1>Mosaic Wall — Camera source</h1>
+  <div class="wrap">
+    <div class="stage"><video id="v" autoplay muted playsinline></video><div class="dot" id="dot"></div></div>
+    <div class="bar">
+      <button class="primary" id="start">Start camera</button>
+      <button id="flip">Flip</button>
+      <label class="meta">quality
+        <select id="q">
+          <option value="480">480 wide</option>
+          <option value="640" selected>640 wide</option>
+          <option value="800">800 wide</option>
+        </select>
+      </label>
+      <span class="meta" id="stat">idle</span>
+    </div>
+    <div class="note">
+      This device's camera is split live across the wall when the <b>Mirror</b> scene is active.
+      Camera access needs a secure context — run this page on <code>localhost</code> or over HTTPS
+      (plain <code>http://</code> to another device will be blocked by the browser).
+    </div>
+    <p class="meta err" id="err"></p>
+  </div>
+
+  <canvas id="c" hidden></canvas>
+  <script>
+    (function () {
+      'use strict';
+      var v = document.getElementById('v');
+      var c = document.getElementById('c');
+      var ctx = c.getContext('2d');
+      var dot = document.getElementById('dot');
+      var stat = document.getElementById('stat');
+      var errEl = document.getElementById('err');
+      var startBtn = document.getElementById('start');
+      var flipBtn = document.getElementById('flip');
+      var qSel = document.getElementById('q');
+
+      var ws = null, wsReady = false, reconnect = 1000;
+      var stream = null, facing = 'user';
+      var FPS = 3, sending = false, sentCount = 0, lastTick = Date.now();
+
+      function connect() {
+        var proto = (location.protocol === 'https:') ? 'wss' : 'ws';
+        ws = new WebSocket(proto + '://' + location.host + '/ws');
+        ws.onopen = function () { wsReady = true; reconnect = 1000; ws.send(JSON.stringify({ type: 'register-camera' })); updateStat(); };
+        ws.onclose = function () { wsReady = false; updateStat(); setTimeout(connect, reconnect); reconnect = Math.min(reconnect * 1.7, 12000); };
+        ws.onerror = function () { try { ws.close(); } catch (e) {} };
+        ws.onmessage = function () {};
+      }
+      connect();
+
+      function updateStat() {
+        dot.className = 'dot' + (sending && wsReady ? ' on' : '');
+        stat.textContent = (!wsReady ? 'link down' : (sending ? ('streaming · ' + FPS + ' fps · ' + sentCount + ' frames') : 'connected — press Start'));
+      }
+
+      function start() {
+        errEl.textContent = '';
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          errEl.textContent = 'getUserMedia unavailable (needs HTTPS or localhost).';
+          return;
+        }
+        if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); }
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false }).then(function (s) {
+          stream = s; v.srcObject = s; sending = true; updateStat();
+        }).catch(function (e) {
+          errEl.textContent = 'Camera error: ' + (e && e.message ? e.message : e) + ' (grant permission; use HTTPS/localhost).';
+        });
+      }
+      startBtn.addEventListener('click', start);
+      flipBtn.addEventListener('click', function () { facing = (facing === 'user') ? 'environment' : 'user'; if (stream) { start(); } });
+
+      function capture() {
+        if (sending && wsReady && v.videoWidth) {
+          var wide = parseInt(qSel.value, 10) || 640;
+          var scale = wide / v.videoWidth;
+          c.width = wide; c.height = Math.round(v.videoHeight * scale);
+          ctx.drawImage(v, 0, 0, c.width, c.height);
+          try {
+            var data = c.toDataURL('image/jpeg', 0.55);
+            ws.send(JSON.stringify({ type: 'camera-frame', data: data }));
+            sentCount++;
+          } catch (e) {}
+        }
+        var now = Date.now();
+        if (now - lastTick > 2000) { lastTick = now; updateStat(); }
+      }
+      setInterval(capture, Math.round(1000 / FPS));
+    })();
+  </script>
+</body>
+</html>

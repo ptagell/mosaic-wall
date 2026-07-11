@@ -1,0 +1,12 @@
+# secrets — the Immich API key lives here; never commit
+.env
+.env.*
+*.pem
+*.key
+
+# runtime state (Docker bind mount, root-owned)
+data/
+
+# node / OS noise
+node_modules/
+.DS_Store
