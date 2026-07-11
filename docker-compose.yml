@@ -11,5 +11,6 @@ services:
       - PERSON_IDS=${PERSON_IDS}
       - PORT=4000
       - DATA_DIR=/app/data
+      - TZ=${TZ:-Australia/Melbourne}
     volumes:
       - ./data:/app/data

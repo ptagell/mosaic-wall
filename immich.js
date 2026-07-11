@@ -53,7 +53,22 @@ function searchMetadata(filter) {
   });
 }
 
+// When photos were taken (id -> epoch ms), harvested from every search result
+// that passes through. Powers "moments" (clusters of photos from one event).
+const takenMap = {};
+function recordTaken(items) {
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    if (!it || !it.id) { continue; }
+    var ts = Date.parse(it.localDateTime || it.fileCreatedAt || '');
+    if (isFinite(ts)) { takenMap[it.id] = ts; }
+  }
+  capCache(takenMap, 20000);
+}
+function takenAt(id) { return takenMap[id] || null; }
+
 function idsFrom(items) {
+  recordTaken(items);
   var out = [];
   for (var i = 0; i < items.length; i++) {
     if (items[i] && items[i].id) { out.push(items[i].id); }
@@ -146,6 +161,72 @@ function getPhotoIdsForSelection(personIds) {
   });
 }
 
+// "On this day" — today's date across the years. Prefers Immich's memory-lane
+// endpoint (one call); falls back to a per-year date-window search. Cached per day.
+let onThisDayCache = null;
+function getOnThisDay() {
+  var now = new Date();
+  var key = now.getFullYear() + '-' + now.getMonth() + '-' + now.getDate();
+  if (onThisDayCache && onThisDayCache.key === key) { return Promise.resolve(onThisDayCache.ids); }
+  var finish = function (ids) { onThisDayCache = { key: key, ids: ids }; return ids; };
+  return immichRequest('/api/assets/memory-lane?day=' + now.getDate() + '&month=' + (now.getMonth() + 1), 'GET')
+    .then(function (lanes) {
+      var items = [];
+      (Array.isArray(lanes) ? lanes : []).forEach(function (lane) {
+        (lane && lane.assets ? lane.assets : []).forEach(function (a) { if (a && a.type !== 'VIDEO') { items.push(a); } });
+      });
+      if (!items.length) { throw new Error('memory lane empty'); }
+      return finish(idsFrom(items));
+    })
+    .catch(function () {
+      // fallback: ±3 days around today for each of the last 15 years
+      var years = [];
+      for (var y = now.getFullYear() - 1; y >= now.getFullYear() - 15; y--) { years.push(y); }
+      return Promise.all(years.map(function (y) {
+        var mid = new Date(y, now.getMonth(), now.getDate());
+        var from = new Date(mid.getTime() - 3 * 86400000);
+        var to = new Date(mid.getTime() + 4 * 86400000);
+        return searchMetadata({ takenAfter: from.toISOString(), takenBefore: to.toISOString() })
+          .then(idsFrom).catch(function () { return []; });
+      })).then(function (lists) {
+        var seen = {}, out = [];
+        lists.forEach(function (l) { l.forEach(function (id) { if (!seen[id]) { seen[id] = true; out.push(id); } }); });
+        return finish(out);
+      });
+    });
+}
+
+// Caption data for one asset: when and where it was taken. Cached, race-guarded
+// so a slow lookup never delays a swap.
+const infoCache = {};
+function getAssetInfo(assetId) {
+  if (infoCache[assetId]) { return Promise.resolve(infoCache[assetId]); }
+  var fetchP = immichRequest('/api/assets/' + encodeURIComponent(assetId), 'GET').then(function (a) {
+    var ex = (a && a.exifInfo) || {};
+    var ts = Date.parse(a.localDateTime || ex.dateTimeOriginal || a.fileCreatedAt || '');
+    var date = isFinite(ts) ? new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+    var place = [ex.city, ex.country].filter(Boolean).join(', ');
+    var info = { date: date, place: place };
+    if (isFinite(ts)) { takenMap[assetId] = ts; }
+    infoCache[assetId] = info;
+    capCache(infoCache, 8000);
+    return info;
+  });
+  var timeoutP = new Promise(function (resolve) { setTimeout(function () { resolve({ date: '', place: '' }); }, 2500); });
+  return Promise.race([fetchP, timeoutP]).catch(function () { return { date: '', place: '' }; });
+}
+
+// Drop the list-level caches so the next scene resolve sees new uploads.
+// Per-asset caches (focus, info, takenAt) stay — those never go stale.
+function clearListCaches() {
+  var k;
+  for (k in smartCache) { delete smartCache[k]; }
+  for (k in personPhotosCache) { delete personPhotosCache[k]; }
+  peopleCache = null;
+  favCache = null;
+  onThisDayCache = null;
+}
+
 function computeFocus(faces) {
   var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   var iw = 0, ih = 0;
@@ -210,5 +291,9 @@ module.exports = {
   getFavorites: getFavorites,
   searchSmart: searchSmart,
   getFocus: getFocus,
+  getOnThisDay: getOnThisDay,
+  getAssetInfo: getAssetInfo,
+  takenAt: takenAt,
+  clearListCaches: clearListCaches,
   proxyImage: proxyImage
 };

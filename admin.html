@@ -127,11 +127,26 @@
               <select id="timingSel">
                 <option value="sync">all together</option>
                 <option value="stagger">each tile on its own beat</option>
-                <option value="wave">sweeping left → right</option>
+                <option value="wave">as a wave</option>
+              </select>
+            </label>
+            <label class="meta" id="waveDirWrap">sweeping
+              <select id="waveDirSel">
+                <option value="lr">left → right</option>
+                <option value="tb">top → bottom</option>
+                <option value="diag">diagonally</option>
               </select>
             </label>
           </div>
           <span class="hint">the wave follows tile placement on the wall below</span>
+        </div>
+        <div class="group">
+          <span class="gt">Moments</span>
+          <div class="bar">
+            <label class="meta">every <input id="momentsEvery" type="number" min="0" max="50" step="1" style="width:56px"> changes</label>
+            <button class="ghost" id="momentNow" title="Gather the wall around one event right now">Now</button>
+          </div>
+          <span class="hint">the wall gathers around one event — photos taken hours apart — then scatters. 0 = off; photo scenes only</span>
         </div>
         <div class="group">
           <span class="gt">Transition</span>
@@ -214,7 +229,41 @@
       </div>
     </section>
 
-    <!-- 4 · WALL — the physical arrangement that split, wave, and wall-wide fields follow -->
+    <!-- 4 · SCHEDULE — the wall runs itself through the day -->
+    <section>
+      <div class="bar" style="margin-bottom:10px">
+        <h2 style="margin:0">Schedule</h2>
+        <span class="meta">the wall runs itself — scene changes use each scene's defaults</span>
+        <button class="scenebtn" id="schedToggle" style="margin-left:auto">Enabled</button>
+      </div>
+      <div class="groups" id="schedGroups">
+        <div class="group">
+          <span class="gt">Day</span>
+          <div class="bar">
+            <label class="meta">wake <input id="schedWake" type="time"></label>
+            <label class="meta">show <select id="schedDayScene"></select></label>
+          </div>
+          <span class="hint">from wake until evening</span>
+        </div>
+        <div class="group">
+          <span class="gt">Evening</span>
+          <div class="bar">
+            <label class="meta">from <input id="schedEve" type="time"></label>
+            <label class="meta">show <select id="schedEveScene"></select></label>
+          </div>
+          <span class="hint">a calmer mood for after dark — art works beautifully here</span>
+        </div>
+        <div class="group">
+          <span class="gt">Night</span>
+          <div class="bar">
+            <label class="meta">sleep at <input id="schedSleep" type="time"></label>
+          </div>
+          <span class="hint">screens fade to black until wake</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 · WALL — the physical arrangement that split, wave, and wall-wide fields follow -->
     <section>
       <div class="bar" style="margin-bottom:10px">
         <h2 style="margin:0">Wall placement</h2>
@@ -233,7 +282,7 @@
       <p class="meta" style="margin:8px 2px 0">Drag placed tiles to match the real arrangement. Tiles with no model or position appear below; set a model and hit <b>Place on wall</b>.</p>
     </section>
 
-    <!-- 5 · DEVICES — the iPads themselves -->
+    <!-- 6 · DEVICES — the iPads themselves -->
     <section>
       <div class="bar" style="margin-bottom:10px">
         <h2 style="margin:0">Devices</h2>
@@ -468,11 +517,14 @@
       if (a === 'one-person') txt = i.personName ? (i.personName + ' · ' + (i.count || 0) + ' photos') : '';
       else if (a === 'different-people') txt = (i.peopleCount || 0) + ' people in rotation';
       else if (a === 'landscapes') txt = (i.count || 0) + ' landscape matches';
+      else if (a === 'on-this-day') txt = (i.count || 0) + ' memories from this day';
       else if (a === 'favorites') txt = (i.count || 0) + ' favourites';
       else if (a === 'search') txt = i.query ? ((i.count || 0) + ' matches for “' + i.query + '”') : 'type a query and hit Go';
       else if (a === 'art') txt = i.artwork ? ('showing “' + (ART_LABELS[i.artwork] || i.artwork) + '”') : 'cycling all artworks';
       else if (a === 'mirror') txt = sceneState.camera ? 'live camera feed' : 'open /camera to start the feed';
       else if (i.count != null) txt = (i.count || 0) + ' photos in pool';
+      if (sceneState.moment) txt = '✦ moment: ' + sceneState.moment.count + ' photos from ' + sceneState.moment.label + (txt ? ' · ' + txt : '');
+      if (sceneState.sleeping) txt = '● asleep (schedule)' + (txt ? ' · ' + txt : '');
       document.getElementById('sceneinfo').textContent = txt;
     }
     function applyScene(key) {
@@ -494,9 +546,15 @@
       if (s.artPalettes) sceneState.artPalettes = s.artPalettes;
       if (s.display) sceneState.display = s.display;
       if (typeof s.slideSec === 'number') sceneState.slideSec = s.slideSec;
+      if (s.waveDir) sceneState.waveDir = s.waveDir;
+      if (typeof s.momentsEvery === 'number') sceneState.momentsEvery = s.momentsEvery;
+      sceneState.moment = s.moment || null;
+      if (s.schedule) sceneState.schedule = s.schedule;
+      sceneState.sleeping = !!s.sleeping;
       sceneState.camera = !!s.camera;
       renderScenes();
       renderDisplay();
+      renderSchedule();
     }
     function renderDisplay() {
       const d = sceneState.display || {};
@@ -509,7 +567,38 @@
       setSel('kbSec', d.kenburnsSec != null ? d.kenburnsSec : 22);
       setSel('effectSel', d.effect || 'none');
       setSel('effectDensity', d.effectDensity != null ? d.effectDensity : 1);
+      setSel('waveDirSel', sceneState.waveDir || 'lr');
+      setSel('momentsEvery', sceneState.momentsEvery != null ? sceneState.momentsEvery : 0);
+      document.getElementById('waveDirWrap').classList.toggle('dimmed', sceneState.timing !== 'wave');
       FX.forEach(fx => { const b = document.querySelector('[data-fx="' + fx + '"]'); if (b) b.className = 'scenebtn' + (d[fx] ? ' active' : ''); });
+    }
+    function renderSchedule() {
+      const sc = sceneState.schedule || {};
+      const setVal = (id, val) => { const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = val; };
+      const tog = document.getElementById('schedToggle');
+      tog.className = 'scenebtn' + (sc.on ? ' active' : '');
+      tog.textContent = sc.on ? (sceneState.sleeping ? 'On — asleep' : 'On') : 'Off';
+      document.getElementById('schedGroups').classList.toggle('dimmed', !sc.on);
+      setVal('schedWake', sc.wake || '07:00');
+      setVal('schedEve', sc.evening || '19:30');
+      setVal('schedSleep', sc.sleep || '22:30');
+      const opts = (sceneState.scenes || []).filter(s => s.key !== 'mirror')
+        .map(s => key => '<option value="' + s.key + '"' + (key === s.key ? ' selected' : '') + '>' + s.label + '</option>');
+      const dsel = document.getElementById('schedDayScene'), esel = document.getElementById('schedEveScene');
+      if (document.activeElement !== dsel) dsel.innerHTML = opts.map(f => f(sc.dayScene || 'random')).join('');
+      if (document.activeElement !== esel) esel.innerHTML = opts.map(f => f(sc.eveScene || 'art')).join('');
+    }
+    function postSchedule(patch) {
+      const body = {
+        on: document.getElementById('schedToggle').classList.contains('active'),
+        wake: document.getElementById('schedWake').value,
+        evening: document.getElementById('schedEve').value,
+        sleep: document.getElementById('schedSleep').value,
+        dayScene: document.getElementById('schedDayScene').value,
+        eveScene: document.getElementById('schedEveScene').value,
+        ...patch
+      };
+      j('/api/admin/schedule', body).then(applyScenes);
     }
     function refreshScenes() { j('/api/admin/scenes').then(applyScenes).catch(() => {}); }
 
@@ -530,6 +619,12 @@
     document.getElementById('kbSec').addEventListener('change', e => j('/api/admin/display', { kenburnsSec: parseFloat(e.target.value) }).then(applyScenes));
     document.getElementById('effectSel').addEventListener('change', e => j('/api/admin/display', { effect: e.target.value }).then(applyScenes));
     document.getElementById('effectDensity').addEventListener('change', e => j('/api/admin/display', { effectDensity: parseFloat(e.target.value) }).then(applyScenes));
+    document.getElementById('waveDirSel').addEventListener('change', e => j('/api/admin/timing', { waveDir: e.target.value }).then(applyScenes));
+    document.getElementById('momentsEvery').addEventListener('change', e => j('/api/admin/timing', { momentsEvery: parseInt(e.target.value, 10) || 0 }).then(applyScenes));
+    document.getElementById('momentNow').addEventListener('click', () => j('/api/admin/moment', {}).then(() => refreshScenes()));
+    document.getElementById('schedToggle').addEventListener('click', () => postSchedule({ on: !(sceneState.schedule && sceneState.schedule.on) }));
+    ['schedWake', 'schedEve', 'schedSleep', 'schedDayScene', 'schedEveScene'].forEach(id =>
+      document.getElementById(id).addEventListener('change', () => postSchedule({})));
     document.querySelectorAll('[data-fx]').forEach(b => b.addEventListener('click', () => {
       const fx = b.getAttribute('data-fx');
       const patch = {}; patch[fx] = !((sceneState.display || {})[fx]);

@@ -56,10 +56,29 @@ function sanitizeDisplay(patch, base) {
   return d;
 }
 
+// --- wave sweep directions + daily schedule ---
+const WAVE_DIRS = ['lr', 'tb', 'diag'];
+function defaultSchedule() {
+  return { on: false, wake: '07:00', dayScene: 'random', evening: '19:30', eveScene: 'art', sleep: '22:30' };
+}
+function sanitizeSchedule(patch, base) {
+  var b = base || defaultSchedule();
+  var d = {};
+  var hm = /^([01]?\d|2[0-3]):[0-5]\d$/;
+  d.on = (typeof patch.on === 'boolean') ? patch.on : b.on;
+  ['wake', 'evening', 'sleep'].forEach(function (k) { d[k] = (typeof patch[k] === 'string' && hm.test(patch[k])) ? patch[k] : b[k]; });
+  d.dayScene = scenes.isScene(patch.dayScene) ? patch.dayScene : b.dayScene;
+  d.eveScene = scenes.isScene(patch.eveScene) ? patch.eveScene : b.eveScene;
+  return d;
+}
+
 // --- persisted store: per-tile assignment + active scene. Survives restarts. ---
 // tiles: id -> { name, model, orientation ('portrait'|'landscape'|null=auto), place ({x,y} mm | null) }
 // scene: active scene key; sceneConfig: { personId? }
-let store = { tiles: {}, scene: 'random', sceneConfig: {}, timing: 'sync', display: defaultDisplay(), slideSec: Math.round(SLIDE_INTERVAL / 1000) };
+let store = {
+  tiles: {}, scene: 'random', sceneConfig: {}, timing: 'sync', display: defaultDisplay(),
+  slideSec: Math.round(SLIDE_INTERVAL / 1000), waveDir: 'lr', momentsEvery: 0, schedule: defaultSchedule()
+};
 function loadStore() {
   try {
     var raw = JSON.parse(fs.readFileSync(REG_FILE, 'utf8'));
@@ -70,6 +89,9 @@ function loadStore() {
     if (raw && typeof raw.slideSec === 'number') { store.slideSec = clampNum(raw.slideSec, store.slideSec, 2, 600); }
     if (raw && raw.display && typeof raw.display === 'object') { store.display = sanitizeDisplay(raw.display, defaultDisplay()); }
     else if (raw && typeof raw.grayscale === 'boolean' && raw.grayscale) { store.display = sanitizeDisplay({ look: 'grayscale' }, defaultDisplay()); } // migrate old flag
+    if (raw && WAVE_DIRS.indexOf(raw.waveDir) !== -1) { store.waveDir = raw.waveDir; }
+    if (raw && typeof raw.momentsEvery === 'number') { store.momentsEvery = Math.round(clampNum(raw.momentsEvery, 0, 0, 50)); }
+    if (raw && raw.schedule && typeof raw.schedule === 'object') { store.schedule = sanitizeSchedule(raw.schedule, defaultSchedule()); }
     console.log('[mosaic] registry loaded: ' + Object.keys(store.tiles).length + ' tiles, scene=' + store.scene + ', timing=' + store.timing);
   } catch (e) { console.log('[mosaic] no saved registry yet'); }
 }
@@ -108,7 +130,7 @@ function send(ws, obj) { if (ws && ws.readyState === 1) { try { ws.send(JSON.str
 // timing: 'sync'   = one clock; every tile swaps together (default)
 //         'stagger'= each tile on its own jittered timer (calmer shimmer)
 //         'wave'   = swaps sweep across the wall by placement (left -> right)
-const engine = { scene: 'random', config: {}, pools: {}, info: {}, gen: 0, timing: 'sync', display: defaultDisplay(), splitImg: null, cameraOnline: false, lastFrame: null, lastRelay: 0, slideMs: SLIDE_INTERVAL, artIdx: -1, artPal: -1, currentArt: null };
+const engine = { scene: 'random', config: {}, pools: {}, info: {}, gen: 0, timing: 'sync', display: defaultDisplay(), splitImg: null, cameraOnline: false, lastFrame: null, lastRelay: 0, slideMs: SLIDE_INTERVAL, artIdx: -1, artPal: -1, currentArt: null, moment: null, momentCount: 0, sleeping: false, schedSlot: null };
 function onlineTileIds() {
   var ids = []; tiles.forEach(function (t, id) { if (t.online) { ids.push(id); } }); return ids;
 }
@@ -128,7 +150,40 @@ function resolveScene() {
       return { pools: engine.pools, info: engine.info };
     });
 }
-function poolFor(id) { var p = engine.pools[id]; return (p && p.length) ? p : poolIds; }
+function poolFor(id) {
+  // during a "moment", shared-pool scenes narrow the whole wall to one event
+  if (engine.moment && SHARED_SCENES.indexOf(engine.scene) !== -1) { return engine.moment.ids; }
+  var p = engine.pools[id]; return (p && p.length) ? p : poolIds;
+}
+
+// --- moments: every N changes, gather the wall around one event (photos taken
+// within a few hours of each other), hold for a couple of swaps, then scatter ---
+const SHARED_SCENES = ['random', 'one-person', 'landscapes', 'favorites', 'search', 'on-this-day'];
+const MOMENT_SPAN_MS = 3 * 3600000;
+const MOMENT_HOLDS = 1; // extra cycles the cluster stays after the one it starts on
+function tryStartMoment() {
+  if (SHARED_SCENES.indexOf(engine.scene) === -1) { return false; }
+  var ids = onlineTileIds();
+  var pool = ids.length ? (engine.pools[ids[0]] && engine.pools[ids[0]].length ? engine.pools[ids[0]] : poolIds) : poolIds;
+  if (pool.length < 8) { return false; }
+  var need = Math.max(3, Math.min(ids.length || 3, 4));
+  var best = null;
+  for (var tryN = 0; tryN < 12; tryN++) {
+    var anchor = randomFrom(pool);
+    var ts = immich.takenAt(anchor);
+    if (!ts) { continue; }
+    var cluster = pool.filter(function (pid) { var t2 = immich.takenAt(pid); return t2 && Math.abs(t2 - ts) <= MOMENT_SPAN_MS; });
+    if (cluster.length >= need && (!best || cluster.length > best.ids.length)) { best = { ids: cluster, ts: ts }; }
+    if (best && best.ids.length >= need * 3) { break; }
+  }
+  if (!best) { return false; }
+  engine.moment = {
+    ids: best.ids, holds: MOMENT_HOLDS,
+    label: new Date(best.ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })
+  };
+  console.log('[mosaic] moment: ' + best.ids.length + ' photos from ' + engine.moment.label);
+  return true;
+}
 
 // --- freshness: never show the same photo on two tiles at once, and keep a
 // recent-history window so a photo doesn't reappear soon after it was shown ---
@@ -196,8 +251,9 @@ function pushNext(id, at) {
   if (!pid) { return; }
   t.lastShow = pid; // set before the async focus lookup so later picks in this cycle see it
   noteShown(pid);
-  return immich.getFocus(pid).then(function (focus) {
-    var m = { type: 'show', id: pid, img: '/img/' + pid + '?size=preview', focusX: focus.x, focusY: focus.y };
+  return Promise.all([immich.getFocus(pid), immich.getAssetInfo(pid)]).then(function (r) {
+    var m = { type: 'show', id: pid, img: '/img/' + pid + '?size=preview', focusX: r[0].x, focusY: r[0].y };
+    if (r[1] && (r[1].date || r[1].place)) { m.info = r[1]; } // tap-to-see caption
     if (at) { m.at = at; }
     send(t.ws, m);
   });
@@ -223,9 +279,10 @@ function regionFor(id, wall) {
   var mm = pe.model ? models.screenMm(pe.model, effectiveOrientation(id)) : null; if (!mm) { return null; }
   return { rx: (pe.place.x - wall.x) / wall.w, ry: (pe.place.y - wall.y) / wall.h, rw: mm.w / wall.w, rh: mm.h / wall.h };
 }
-function splitMsg(id, pid, wall, at) {
+function splitMsg(id, pid, wall, at, info) {
   var m = { type: 'show', id: pid, img: '/img/' + pid + '?size=preview' };
   if (at) { m.at = at; }
+  if (info && (info.date || info.place)) { m.info = info; }
   var r = regionFor(id, wall);
   if (r) { m.split = r; } // placed tiles get their crop; unplaced fall back to the whole image
   return m;
@@ -239,12 +296,17 @@ function pushSplit(at) {
   engine.splitImg = pid;
   noteShown(pid);
   var wall = wallBox();
-  onlineTileIds().forEach(function (id) { var t = tiles.get(id); if (t) { send(t.ws, splitMsg(id, pid, wall, at)); } });
+  return immich.getAssetInfo(pid).then(function (info) {
+    onlineTileIds().forEach(function (id) { var t = tiles.get(id); if (t) { send(t.ws, splitMsg(id, pid, wall, at, info)); } });
+  });
 }
 function pushSplitOne(id, at) {
   var t = tiles.get(id); if (!t) { return; }
   if (!engine.splitImg) { return pushSplit(at); }
-  send(t.ws, splitMsg(id, engine.splitImg, wallBox(), at));
+  var pid = engine.splitImg;
+  return immich.getAssetInfo(pid).then(function (info) {
+    send(t.ws, splitMsg(id, pid, wallBox(), at, info));
+  });
 }
 
 // --- Phase 6: mirror — ONE separate camera, split live across the wall ---
@@ -253,7 +315,7 @@ function pushSplitOne(id, at) {
 const MIRROR_MIN_MS = parseInt(process.env.MIRROR_MIN_MS || '140', 10);
 function onCameraFrame(dataUrl) {
   engine.lastFrame = dataUrl;
-  if (engine.scene !== 'mirror') { return; }
+  if (engine.scene !== 'mirror' || engine.sleeping) { return; }
   var now = Date.now();
   if (now - engine.lastRelay < MIRROR_MIN_MS) { return; } // cap the relay rate
   engine.lastRelay = now;
@@ -314,15 +376,23 @@ function scheduleTile(id) {
 }
 function unschedule(id) { clearTimeout(tileTimers[id]); delete tileTimers[id]; }
 
-// Per-tile delay (ms) for a wave sweep, from each tile's placed x-position.
+// Per-tile delay (ms) for a wave sweep, from placement: left->right (x),
+// top->bottom (y), or diagonal (x+y) per the configured direction.
 function waveDelays() {
+  var dir = store.waveDir || 'lr';
+  var keyOf = function (pe) {
+    if (!pe || !pe.place) { return null; }
+    if (dir === 'tb') { return pe.place.y; }
+    if (dir === 'diag') { return pe.place.x + pe.place.y; }
+    return pe.place.x;
+  };
   var ids = onlineTileIds();
-  var minX = Infinity, maxX = -Infinity;
-  ids.forEach(function (id) { var pe = store.tiles[id]; if (pe && pe.place) { minX = Math.min(minX, pe.place.x); maxX = Math.max(maxX, pe.place.x); } });
-  if (!isFinite(minX)) { minX = 0; maxX = 0; }
-  var span = (maxX > minX) ? (maxX - minX) : 1;
+  var lo = Infinity, hi = -Infinity;
+  ids.forEach(function (id) { var k = keyOf(store.tiles[id]); if (k != null) { lo = Math.min(lo, k); hi = Math.max(hi, k); } });
+  if (!isFinite(lo)) { lo = 0; hi = 0; }
+  var span = (hi > lo) ? (hi - lo) : 1;
   var out = {};
-  ids.forEach(function (id) { var pe = store.tiles[id]; var x = (pe && pe.place) ? pe.place.x : minX; out[id] = Math.round(((x - minX) / span) * WAVE_SPAN); });
+  ids.forEach(function (id) { var k = keyOf(store.tiles[id]); out[id] = (k == null) ? 0 : Math.round(((k - lo) / span) * WAVE_SPAN); });
   return out;
 }
 // One coordinated swap across the wall. Every tile is told the SAME server-time
@@ -330,11 +400,18 @@ function waveDelays() {
 // the whole wall changes within a few ms regardless of network jitter. In split
 // mode the wall shows one picture; in wave mode the `at` is offset by position.
 function runCycle() {
+  if (engine.sleeping) { return; } // scheduled night: screens are dark
   if (engine.scene === 'mirror') { return; } // driven by camera frames, not the photo clock
   var lead = Math.min(LEAD_MS, Math.max(300, engine.slideMs - 300)); // never lead longer than the interval
   var at = Date.now() + lead;
   if (engine.scene === 'art') { pushArt(at); return; } // wave handled inside (sweeps the change)
   if (engine.scene === 'split-image') { pushSplit(at); return; }
+  // moments: wind the current one down, or start a new one every N changes
+  if (engine.moment) { if (--engine.moment.holds < 0) { engine.moment = null; } }
+  else if (store.momentsEvery > 0 && ++engine.momentCount >= store.momentsEvery) {
+    engine.momentCount = 0;
+    tryStartMoment();
+  }
   if (engine.timing === 'wave') {
     var d = waveDelays();
     onlineTileIds().forEach(function (id) { pushNext(id, at + (d[id] || 0)); });
@@ -344,6 +421,7 @@ function runCycle() {
 }
 // Immediate refresh after a scene/setting change (respects timing mode).
 function kickCycle() {
+  if (engine.sleeping) { return; }
   if (engine.scene === 'mirror') { if (engine.lastFrame) { engine.lastRelay = 0; onCameraFrame(engine.lastFrame); } return; }
   if (engine.scene === 'art') { pushArt(); return; } // immediate, no scheduled lead
   if (engine.scene === 'split-image' || engine.timing !== 'stagger') { runCycle(); } else { pushAll(); }
@@ -423,12 +501,67 @@ function applySpotlight() {
 function setScene(scene, config) {
   engine.scene = scene;
   engine.config = config || {};
+  engine.moment = null; engine.momentCount = 0; // a new scene starts a fresh rhythm
   store.scene = scene; store.sceneConfig = engine.config; saveStore();
   return resolveScene().then(function (res) {
     applyTiming(); kickCycle();
     return res;
   });
 }
+
+// --- daily schedule: the wall runs itself — day scene, evening scene, then
+// dark screens overnight. Server local time (set TZ in docker-compose). ---
+function minutesOf(hm) { var m = /^(\d{1,2}):(\d{2})$/.exec(hm || ''); return m ? (parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) : 0; }
+function scheduleSlot(now) {
+  var s = store.schedule;
+  if (!s || !s.on) { return null; }
+  var mins = now.getHours() * 60 + now.getMinutes();
+  var wake = minutesOf(s.wake), eve = minutesOf(s.evening), sleep = minutesOf(s.sleep);
+  var asleep = (sleep > wake) ? (mins >= sleep || mins < wake) : (mins >= sleep && mins < wake);
+  if (asleep) { return 'sleep'; }
+  if (mins >= eve || mins < wake) { return 'evening'; } // < wake only happens when sleep wraps past midnight
+  return 'day';
+}
+function sleepTiles() {
+  engine.sleeping = true;
+  console.log('[mosaic] schedule: goodnight — screens dark');
+  tiles.forEach(function (t) { if (t.online) { send(t.ws, { type: 'sleep' }); } });
+}
+function wakeTiles() {
+  engine.sleeping = false;
+  console.log('[mosaic] schedule: good morning — screens on');
+  tiles.forEach(function (t) { if (t.online) { send(t.ws, { type: 'wake' }); } });
+}
+function applySchedule(force) {
+  var slot = scheduleSlot(new Date());
+  if (!force && slot === engine.schedSlot) { return; }
+  engine.schedSlot = slot;
+  if (slot === null) { if (engine.sleeping) { wakeTiles(); kickCycle(); } return; } // schedule turned off
+  if (slot === 'sleep') { if (!engine.sleeping) { sleepTiles(); } return; }
+  if (engine.sleeping) { wakeTiles(); }
+  var target = (slot === 'evening') ? store.schedule.eveScene : store.schedule.dayScene;
+  if (scenes.isScene(target) && engine.scene !== target) { setScene(target, {}); } else { kickCycle(); }
+}
+// On boot only honour an active sleep window; scene changes wait for the next
+// boundary so a restart doesn't stomp whatever was chosen manually.
+function initSchedule() {
+  engine.schedSlot = scheduleSlot(new Date());
+  if (engine.schedSlot === 'sleep') { sleepTiles(); }
+}
+setInterval(applySchedule, 30000);
+
+// --- keep pools fresh: new Immich uploads appear without touching the admin ---
+const POOL_REFRESH_MS = parseInt(process.env.POOL_REFRESH_MS || '3600000', 10);
+setInterval(function () {
+  if (engine.scene === 'mirror' || engine.scene === 'art') { return; }
+  immich.clearListCaches();
+  immich.getPhotoIdsForSelection([]).then(function (ids) {
+    if (ids && ids.length) { poolIds = ids; }
+    return resolveScene();
+  }).then(function () {
+    console.log('[mosaic] pools refreshed (' + poolIds.length + ' in default pool)');
+  }).catch(function (err) { console.error('[mosaic] pool refresh failed: ' + err.message); });
+}, POOL_REFRESH_MS);
 
 function effectiveOrientation(id) {
   var pe = store.tiles[id] || {};
@@ -523,7 +656,10 @@ function sceneSnapshot() {
   return {
     scenes: scenes.SCENES, active: engine.scene, config: engine.config, info: engine.info,
     timing: engine.timing, timings: TIMINGS, looks: LOOKS, transitions: TRANSITIONS, effects: EFFECTS, artworks: ARTS, artPalettes: ART_PALETTES, display: engine.display,
-    slideSec: Math.round((engine.slideMs / 1000) * 10) / 10, camera: engine.cameraOnline
+    slideSec: Math.round((engine.slideMs / 1000) * 10) / 10, camera: engine.cameraOnline,
+    waveDir: store.waveDir, waveDirs: WAVE_DIRS, momentsEvery: store.momentsEvery,
+    moment: engine.moment ? { count: engine.moment.ids.length, label: engine.moment.label } : null,
+    schedule: store.schedule, sleeping: engine.sleeping
   };
 }
 
@@ -551,7 +687,7 @@ const server = http.createServer(function (req, res) {
   // --- admin API ---
   if (p === '/api/models') { return sendJson(res, { models: models.MODELS }); }
   if (p === '/api/admin/state') { return sendJson(res, stateSnapshot()); }
-  if (p === '/api/admin/showRandom') { pushAll(); return sendJson(res, { ok: true }); }
+  if (p === '/api/admin/showRandom') { kickCycle(); return sendJson(res, { ok: true }); } // "Next now" — respects the active scene
   if (p === '/api/admin/scenes') { return sendJson(res, sceneSnapshot()); }
   if (p === '/api/admin/scene' && req.method === 'POST') {
     return readBody(req).then(function (b) {
@@ -580,8 +716,23 @@ const server = http.createServer(function (req, res) {
     return readBody(req).then(function (b) {
       if (b.mode != null && !setTiming(String(b.mode))) { return sendJson(res, { error: 'mode must be sync, stagger or wave' }, 400); }
       if (b.slideSec != null) { setSlide(b.slideSec); }
+      if (typeof b.waveDir === 'string' && WAVE_DIRS.indexOf(b.waveDir) !== -1) { store.waveDir = b.waveDir; saveStore(); }
+      if (b.momentsEvery != null) { store.momentsEvery = Math.round(clampNum(b.momentsEvery, store.momentsEvery, 0, 50)); engine.momentCount = 0; saveStore(); }
       sendJson(res, sceneSnapshot());
     });
+  }
+  if (p === '/api/admin/schedule' && req.method === 'POST') {
+    return readBody(req).then(function (b) {
+      store.schedule = sanitizeSchedule(b || {}, store.schedule);
+      saveStore();
+      applySchedule(true); // take effect now, not at the next boundary
+      sendJson(res, sceneSnapshot());
+    });
+  }
+  if (p === '/api/admin/moment' && req.method === 'POST') {
+    var started = tryStartMoment();
+    if (started) { engine.momentCount = 0; kickCycle(); }
+    return sendJson(res, { ok: started, moment: engine.moment ? { count: engine.moment.ids.length, label: engine.moment.label } : null });
   }
   if (p === '/api/admin/display' && req.method === 'POST') {
     return readBody(req).then(function (b) { setDisplay(b || {}); sendJson(res, sceneSnapshot()); });
@@ -678,10 +829,12 @@ wss.on('connection', function (ws) {
       console.log('[mosaic] tile registered: ' + deviceId + ' native ' + nativeW + 'x' + nativeH + ' ' + (msg.orientation || '?') + ' model=' + pe.model);
       send(ws, { type: 'welcome', deviceId: deviceId });
       send(ws, tileConfigMsg(deviceId));
+      if (engine.sleeping) { send(ws, { type: 'sleep' }); } // scheduled night: stay dark, skip content
       // include this tile in the scene, show something now, and (in stagger mode)
       // start its own timer; in sync mode the global interval already covers it.
       var reg = deviceId;
       resolveScene().then(function () {
+        if (engine.sleeping) { return; }
         if (engine.scene === 'mirror') { if (engine.lastFrame) { var w = wallBox(); var r = regionFor(reg, w); var m = { type: 'frame', img: engine.lastFrame }; if (r) { m.split = r; } send(tiles.get(reg).ws, m); } }
         else if (engine.scene === 'split-image') { pushSplitOne(reg); }
         else if (engine.scene === 'art') { pushArtOne(reg); }
@@ -731,5 +884,6 @@ server.listen(PORT, function () {
   console.log('[mosaic] scene: ' + engine.scene + ', timing: ' + engine.timing + ', look: ' + engine.display.look);
   ensurePool().then(resolveScene).then(applyTiming);
   applySpotlight();
+  initSchedule();
 });
 server.on('error', function (err) { console.error('[mosaic] server error: ' + err.message); process.exit(1); });

@@ -16,6 +16,7 @@ var SCENES = [
   { key: 'one-person',       label: 'One person',      desc: 'The whole wall shows photos of a single person.' },
   { key: 'different-people', label: 'Different people', desc: 'Each tile is assigned a different person (choose who).' },
   { key: 'landscapes',       label: 'Landscapes',      desc: 'Scenery with no people, across the wall.' },
+  { key: 'on-this-day',      label: 'On this day',     desc: 'Today’s date across the years — memories resurface.' },
   { key: 'favorites',        label: 'Favourites',      desc: 'Your Immich favourites — a curated best-of.' },
   { key: 'search',           label: 'Search',          desc: 'A smart (CLIP) text search across the library.' },
   { key: 'art',              label: 'Art',             desc: 'Generative art — plasma, fractals, flow fields — painted live across the wall instead of photos.' },
@@ -105,6 +106,13 @@ function resolvePools(scene, config, tileIds, ctx) {
       var ids = r[0] || [], fallback = r[1] || [];
       var pools = fillBlanks(shareAll(tileIds, ids), tileIds, fallback);
       return { pools: pools, info: { query: LANDSCAPE_QUERY, count: ids.length } };
+    });
+  }
+
+  if (scene === 'on-this-day') {
+    return Promise.all([immich.getOnThisDay(), getDefault()]).then(function (r) {
+      var ids = r[0] || [], fallback = r[1] || [];
+      return { pools: fillBlanks(shareAll(tileIds, ids), tileIds, fallback), info: { count: ids.length } };
     });
   }
 

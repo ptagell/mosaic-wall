@@ -64,6 +64,20 @@
       background: rgba(0,0,0,0.55); color: #fff;
       font: 700 22vmin -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
     #ident.show { display: flex; }
+
+    /* scheduled night: black the screen without tearing down the page */
+    #sleep { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 8;
+      background: #000; opacity: 0; visibility: hidden;
+      -webkit-transition: opacity 2s ease, visibility 0s linear 2s; transition: opacity 2s ease, visibility 0s linear 2s; }
+    #sleep.on { opacity: 1; visibility: visible;
+      -webkit-transition: opacity 2s ease; transition: opacity 2s ease; }
+
+    /* tap-to-see caption: when and where the photo was taken */
+    #cap { position: absolute; left: 10px; bottom: 10px; z-index: 6; max-width: 82%;
+      color: #fff; font: 500 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: rgba(0,0,0,0.55); padding: 5px 10px; border-radius: 7px;
+      opacity: 0; -webkit-transition: opacity 0.3s; transition: opacity 0.3s; pointer-events: none; }
+    #cap.show { opacity: 1; }
   </style>
 </head>
 <body>
@@ -73,6 +87,8 @@
     <div id="tint" class="overlay"></div>
     <canvas id="fx"></canvas>
   </div>
+  <div id="cap"></div>
+  <div id="sleep"></div>
   <div id="dot" title="link status"></div>
   <div id="ident"></div>
 
@@ -90,6 +106,8 @@
       var fxCanvas = document.getElementById('fx');
       var dot = document.getElementById('dot');
       var identEl = document.getElementById('ident');
+      var capEl = document.getElementById('cap');
+      var sleepEl = document.getElementById('sleep');
 
       var deviceId = null;
       var currentSlide = null;
@@ -675,6 +693,7 @@
       var glBroken = false;   // flips on init failure / context loss -> 2D fallbacks
       var curArt = null;      // {name, palette} of the artwork on screen
       var artResizeTimer = null;
+      var ART_TITLES = { plasma: 'plasma', lava: 'lava lamp', kaleido: 'kaleidoscope', julia: 'Julia fractal', tunnel: 'tunnel', waves: 'silk waves', flow: 'flow field', phyllo: 'phyllotaxis bloom', spiro: 'spirograph', metaballs: 'lava blobs' };
 
       function artBackingScale(name, mode) {
         var cw = stage.clientWidth || window.innerWidth;
@@ -742,6 +761,7 @@
           lastSplit = null;
           var slide = document.createElement('div');
           slide.className = 'slide';
+          slide.__cap = ART_TITLES[name] || name; // tap shows what's playing
           var tsec = (typeof cfg.transitionSec === 'number') ? cfg.transitionSec : 1.2;
           slide.style.webkitTransition = 'opacity ' + tsec + 's ease';
           slide.style.transition = 'opacity ' + tsec + 's ease';
@@ -789,6 +809,11 @@
         img.style.width = imgW + 'px'; img.style.height = imgH + 'px';
         img.style.left = (cx - rx * wallW) + 'px';
         img.style.top = (cy - ry * wallH) + 'px';
+        // wall centre in the image's own coordinates: every tile scales about the
+        // SAME wall point, so a Ken Burns zoom reads as one picture moving
+        var origin = (wallW / 2 - cx) + 'px ' + (wallH / 2 - cy) + 'px';
+        img.style.webkitTransformOrigin = origin;
+        img.style.transformOrigin = origin;
       }
       function relayoutSplit() {
         if (!lastSplit || !currentSlide) { return; }
@@ -797,7 +822,7 @@
       }
 
       /* ---- rendering: preload fully, schedule the swap, then transition in ---- */
-      function showImage(imgUrl, focusX, focusY, at, split) {
+      function showImage(imgUrl, focusX, focusY, at, split, info) {
         if (!imgUrl) { return; }
         var loader = new Image();
         var handled = false;
@@ -808,6 +833,9 @@
           curArt = null; // a photo takes over from any artwork
           var slide = document.createElement('div');
           slide.className = 'slide';
+          if (info && (info.date || info.place)) {
+            slide.__cap = [info.date, info.place].filter(function (x) { return !!x; }).join(' · ');
+          }
           var tsec = (typeof cfg.transitionSec === 'number') ? cfg.transitionSec : 1.2;
           slide.style.webkitTransition = 'opacity ' + tsec + 's ease, -webkit-transform ' + tsec + 's ease';
           slide.style.transition = 'opacity ' + tsec + 's ease, transform ' + tsec + 's ease';
@@ -818,6 +846,14 @@
             img.className = 'splitimg';
             layoutSplit(img, split, loader.naturalWidth, loader.naturalHeight);
             lastSplit = { split: split, natW: loader.naturalWidth, natH: loader.naturalHeight };
+            if (cfg.kenburns) {
+              // wall-wide Ken Burns: same origin (wall centre, set by layoutSplit)
+              // and same clock-aligned start on every tile = one picture zooming
+              var kbSplit = (typeof cfg.kenburnsSec === 'number') ? cfg.kenburnsSec : 22;
+              img.style.webkitAnimationDuration = kbSplit + 's';
+              img.style.animationDuration = kbSplit + 's';
+              img.className = 'splitimg kb';
+            }
           } else {
             lastSplit = null;
             var fx = (typeof focusX === 'number') ? focusX : 50;
@@ -903,13 +939,15 @@
         spotTimer = setTimeout(function () { frame.className = ''; }, 1750);
       }
 
-      /* ---- link-status dot: hidden unless tapped (kiosk stays clean) ---- */
+      /* ---- tap to peek: link-status dot + the photo's caption (kiosk stays clean) ---- */
       var linkUp = false, dotVisible = false, dotTimer = null;
       function renderDot() { dot.className = (linkUp ? 'on' : '') + (dotVisible ? ' show' : ''); }
       function peekStatus() {
         dotVisible = true; renderDot();
+        var cap = currentSlide && currentSlide.__cap;
+        if (cap) { capEl.textContent = cap; capEl.className = 'show'; }
         clearTimeout(dotTimer);
-        dotTimer = setTimeout(function () { dotVisible = false; renderDot(); }, 4000);
+        dotTimer = setTimeout(function () { dotVisible = false; renderDot(); capEl.className = ''; }, 4000);
       }
       document.addEventListener('touchstart', peekStatus, false);
       document.addEventListener('mousedown', peekStatus, false);
@@ -986,7 +1024,7 @@
           if (msg.type === 'welcome') {
             if (msg.deviceId) { deviceId = msg.deviceId; saveId(deviceId); }
           } else if (msg.type === 'show') {
-            showImage(msg.img, msg.focusX, msg.focusY, msg.at, msg.split);
+            showImage(msg.img, msg.focusX, msg.focusY, msg.at, msg.split, msg.info);
           } else if (msg.type === 'frame') {
             renderFrame(msg.img, msg.split);
           } else if (msg.type === 'art') {
@@ -1000,6 +1038,13 @@
             highlight();
           } else if (msg.type === 'identify') {
             identify(msg.label);
+          } else if (msg.type === 'sleep') {
+            // scheduled night: fade to black and halt rendering work behind it
+            sleepEl.className = 'on';
+            if (currentSlide && currentSlide.__stop) { currentSlide.__stop(); }
+            if (fxRaf) { cancelAnimationFrame(fxRaf); fxRaf = null; }
+          } else if (msg.type === 'wake') {
+            location.reload(); // fresh page: re-registers, restores config + content, sheds memory
           } else if (msg.type === 'ping') {
             if (ws && ws.readyState === 1) { ws.send(JSON.stringify({ type: 'pong', t: msg.t })); }
           } else if (msg.type === 'reload') {
