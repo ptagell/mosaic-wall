@@ -19,6 +19,15 @@
     button.ghost { background:transparent; }
     .bar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
 
+    /* setting groups: one card per concern, so related controls sit together */
+    .groups { display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; }
+    .group { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 13px;
+      display:flex; flex-direction:column; gap:8px; flex:1; min-width:230px; }
+    .gt { font-size:0.68rem; letter-spacing:0.12em; text-transform:uppercase; color:var(--ink2);
+      font-family:ui-monospace,Menlo,Consolas,monospace; }
+    .hint { color:var(--ink2); font-size:0.74rem; margin-top:auto; }
+    .dimmed { opacity:0.4; }
+
     /* scene switcher */
     .scenebtns { display:flex; gap:6px; flex-wrap:wrap; }
     .scenebtn { background:var(--card2); border:1px solid var(--line); border-radius:999px; padding:6px 14px; cursor:pointer; }
@@ -64,10 +73,19 @@
     <span class="meta" style="margin-left:auto">Free-form layout · drag to place</span>
   </header>
   <main>
+    <!-- 1 · CONTENT — what the wall shows, plus the active scene's own options -->
     <section>
-      <h2>Scene</h2>
+      <div class="bar" style="margin-bottom:10px">
+        <h2 style="margin:0">Scene</h2>
+        <span class="meta">what the wall shows</span>
+        <button class="ghost" id="showRandom" style="margin-left:auto" title="Skip ahead: push the next picture/artwork to every tile now">Next now</button>
+      </div>
       <div class="bar">
         <div class="scenebtns" id="scenebtns"></div>
+        <span class="meta" id="sceneinfo" style="margin-left:auto"></span>
+      </div>
+      <p class="meta" id="scenedesc" style="margin:8px 2px 0"></p>
+      <div class="bar" style="margin-top:8px">
         <label class="meta" id="personwrap" style="display:none">person
           <select id="personSel"></select>
         </label>
@@ -85,77 +103,124 @@
           <label class="meta">speed <input id="artSpeed" type="number" min="0.25" max="3" step="0.25" style="width:58px" value="1">×</label>
         </span>
         <span class="meta" id="mirrorwrap" style="display:none"><a href="/camera" target="_blank" style="color:var(--accent)">Open camera ↗</a> <span id="camstat"></span></span>
-        <span class="meta" id="sceneinfo" style="margin-left:auto"></span>
       </div>
-      <p class="meta" id="scenedesc" style="margin:8px 2px 0"></p>
       <div id="peoplewrap" style="display:none; margin-top:8px">
         <div class="meta">people in rotation <span id="peopleCount"></span>
           <button id="peopleAll" class="ghost" style="padding:2px 8px; margin-left:6px">Everyone</button>
         </div>
         <div id="peopleList" class="peoplelist"></div>
       </div>
-      <div class="bar" style="margin-top:12px">
-        <label class="meta">look
-          <select id="lookSel">
-            <option value="none">normal</option>
-            <option value="grayscale">black &amp; white</option>
-            <option value="sepia">sepia</option>
-            <option value="warm">warm</option>
-            <option value="punch">punch</option>
-            <option value="noir">noir</option>
-          </select>
-        </label>
-        <label class="meta">transition
-          <select id="transSel">
-            <option value="fade">fade</option>
-            <option value="slide">slide</option>
-            <option value="zoom">zoom</option>
-            <option value="random">random</option>
-          </select>
-        </label>
-        <label class="meta">fade <input id="transSec" type="number" min="0" max="6" step="0.1" style="width:58px"> s</label>
-        <button class="scenebtn" data-fx="kenburns">Ken Burns</button>
-        <label class="meta">for <input id="kbSec" type="number" min="5" max="90" step="1" style="width:54px"> s</label>
-        <button class="scenebtn" data-fx="vignette">Vignette</button>
-        <button class="scenebtn" data-fx="tint">Tint</button>
-        <button class="scenebtn" data-fx="nightDim">Night dim</button>
+    </section>
+
+    <!-- 2 · PLAYBACK — when the wall changes and how one picture hands over to the next -->
+    <section>
+      <div class="bar" style="margin-bottom:10px">
+        <h2 style="margin:0">Playback</h2>
+        <span class="meta">when it changes, and how</span>
       </div>
-      <div class="bar" style="margin-top:8px">
-        <label class="meta">timing
-          <select id="timingSel">
-            <option value="sync">in sync</option>
-            <option value="stagger">staggered</option>
-            <option value="wave">wave</option>
-          </select>
-        </label>
-        <label class="meta">change every <input id="slideSec" type="number" min="2" max="600" step="1" style="width:64px"> s</label>
-        <button class="scenebtn" data-fx="spotlight">Spotlight</button>
-        <span class="meta">effects apply to the whole wall</span>
-        <button class="ghost" id="reloadAll" style="margin-left:auto" title="Push the latest tile code to every device">Reload all tiles</button>
-      </div>
-      <div class="bar" style="margin-top:8px">
-        <label class="meta">artistic effect
-          <select id="effectSel">
-            <option value="none">none</option>
-            <option value="bokeh">bokeh</option>
-            <option value="snow">snow</option>
-            <option value="embers">embers</option>
-            <option value="stars">starfield</option>
-            <option value="network">constellation</option>
-            <option value="aurora">aurora</option>
-            <option value="glass">liquid glass</option>
-          </select>
-        </label>
-        <label class="meta">density <input id="effectDensity" type="number" min="0.2" max="2" step="0.1" style="width:58px"></label>
-        <span class="meta">a wall-wide field drawn across every tile</span>
+      <div class="groups">
+        <div class="group">
+          <span class="gt">Pace</span>
+          <div class="bar">
+            <label class="meta">change every <input id="slideSec" type="number" min="2" max="600" step="1" style="width:64px"> s</label>
+            <label class="meta">across the wall
+              <select id="timingSel">
+                <option value="sync">all together</option>
+                <option value="stagger">each tile on its own beat</option>
+                <option value="wave">sweeping left → right</option>
+              </select>
+            </label>
+          </div>
+          <span class="hint">the wave follows tile placement on the wall below</span>
+        </div>
+        <div class="group">
+          <span class="gt">Transition</span>
+          <div class="bar">
+            <label class="meta">style
+              <select id="transSel">
+                <option value="fade">fade</option>
+                <option value="slide">slide</option>
+                <option value="zoom">zoom</option>
+                <option value="random">random</option>
+              </select>
+            </label>
+            <label class="meta">lasting <input id="transSec" type="number" min="0" max="6" step="0.1" style="width:58px"> s</label>
+          </div>
+          <span class="hint">art, split &amp; mirror always crossfade — the duration still applies</span>
+        </div>
+        <div class="group" id="kbGroup">
+          <span class="gt">Ken Burns</span>
+          <div class="bar">
+            <button class="scenebtn" data-fx="kenburns">Ken Burns</button>
+            <label class="meta">zoom over <input id="kbSec" type="number" min="5" max="90" step="1" style="width:54px"> s</label>
+          </div>
+          <span class="hint">slow zoom toward each photo's faces — photo scenes only</span>
+        </div>
       </div>
     </section>
 
+    <!-- 3 · LOOK — colour grading and atmosphere layered over whatever is showing -->
+    <section>
+      <div class="bar" style="margin-bottom:10px">
+        <h2 style="margin:0">Look &amp; atmosphere</h2>
+        <span class="meta">layered over everything the wall shows, in this order: colour → light → overlay</span>
+      </div>
+      <div class="groups">
+        <div class="group">
+          <span class="gt">Colour</span>
+          <div class="bar">
+            <label class="meta">look
+              <select id="lookSel">
+                <option value="none">normal</option>
+                <option value="grayscale">black &amp; white</option>
+                <option value="sepia">sepia</option>
+                <option value="warm">warm</option>
+                <option value="punch">punch</option>
+                <option value="noir">noir</option>
+              </select>
+            </label>
+            <button class="scenebtn" data-fx="tint">Tint</button>
+          </div>
+          <span class="hint">tint washes the wall in a single amber tone</span>
+        </div>
+        <div class="group">
+          <span class="gt">Light</span>
+          <div class="bar">
+            <button class="scenebtn" data-fx="vignette">Vignette</button>
+            <button class="scenebtn" data-fx="nightDim">Night dim</button>
+          </div>
+          <span class="hint">night dim softens brightness through the evening, by each tile's clock</span>
+        </div>
+        <div class="group">
+          <span class="gt">Ambience</span>
+          <div class="bar">
+            <label class="meta">overlay
+              <select id="effectSel">
+                <option value="none">none</option>
+                <option value="bokeh">bokeh</option>
+                <option value="snow">snow</option>
+                <option value="embers">embers</option>
+                <option value="stars">starfield</option>
+                <option value="network">constellation</option>
+                <option value="aurora">aurora</option>
+                <option value="glass">liquid glass</option>
+              </select>
+            </label>
+            <label class="meta">density <input id="effectDensity" type="number" min="0.2" max="2" step="0.1" style="width:58px"></label>
+            <button class="scenebtn" data-fx="spotlight">Spotlight</button>
+          </div>
+          <span class="hint">one particle field spans every tile; spotlight hops tile to tile</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 · WALL — the physical arrangement that split, wave, and wall-wide fields follow -->
     <section>
       <div class="bar" style="margin-bottom:10px">
         <h2 style="margin:0">Wall placement</h2>
+        <span class="meta">split image, wave &amp; overlays follow this arrangement</span>
         <span class="meta" id="wallsize"></span>
-        <label class="meta">shown width
+        <label class="meta" style="margin-left:auto">shown width
           <select id="zoom">
             <option value="1000">1 m</option>
             <option value="1800">1.8 m</option>
@@ -163,15 +228,16 @@
             <option value="4000">4 m</option>
           </select>
         </label>
-        <button class="ghost" id="showRandom" style="margin-left:auto">Refresh all now</button>
       </div>
       <div class="wall" id="wall"></div>
       <p class="meta" style="margin:8px 2px 0">Drag placed tiles to match the real arrangement. Tiles with no model or position appear below; set a model and hit <b>Place on wall</b>.</p>
     </section>
 
+    <!-- 5 · DEVICES — the iPads themselves -->
     <section>
       <div class="bar" style="margin-bottom:10px">
-        <h2 style="margin:0">Tiles</h2>
+        <h2 style="margin:0">Devices</h2>
+        <button class="ghost" id="reloadAll" title="Push the latest tile code to every device">Reload all tiles</button>
         <button class="ghost" id="removeOffline" style="margin-left:auto" title="Drop every tile that isn't currently connected">Remove offline</button>
       </div>
       <div class="tiles" id="tiles"><span class="empty">No tiles yet. Open <code>/tile</code> on a device.</span></div>
@@ -339,6 +405,10 @@
       document.getElementById('peoplewrap').style.display = a === 'different-people' ? '' : 'none';
       if (a === 'art') renderArtSel();
       if (a === 'mirror') document.getElementById('camstat').textContent = sceneState.camera ? '● camera live' : '○ no camera';
+      // grey out playback controls the active scene ignores
+      const photoScene = !['art', 'mirror', 'split-image'].includes(a);
+      document.getElementById('kbGroup').classList.toggle('dimmed', !photoScene);
+      document.getElementById('transSel').parentElement.classList.toggle('dimmed', !photoScene);
       if (a === 'search') { const si = document.getElementById('searchInput'); if (document.activeElement !== si) si.value = (sceneState.config && sceneState.config.query) || ''; }
       if (a === 'different-people') renderPeopleList();
       renderSceneInfo();
