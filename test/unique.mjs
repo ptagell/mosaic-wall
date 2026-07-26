@@ -2,8 +2,9 @@
 // photo that was shown recently doesn't come straight back. Drives 6 raw-WS
 // tiles (no browser needed) through several wall swaps and inspects the photo
 // ids the server hands out. Restores prior settings and removes its tiles.
-const APP = 'http://localhost:4000';
-const WS = 'ws://localhost:4000/ws';
+const PORT = process.env.MOSAIC_PORT || '4000';
+const APP = `http://localhost:${PORT}`;
+const WS = `ws://localhost:${PORT}/ws`;
 const TILES = 6, ROUNDS = 5;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];

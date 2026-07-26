@@ -3,6 +3,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const immich = require('../immich.js');
+const photoIndex = require('../photo_index.js');
 const scenes = require('../scenes.js');
 
 const results = [];
@@ -17,9 +18,10 @@ const SMART = ['s1', 's2', 's3'];
 
 // scenes.js holds a live reference to this same module object, so patching works
 immich.getPeople = () => Promise.resolve(PEOPLE);
-immich.getPersonPhotoIds = (id) => Promise.resolve(PHOTOS[id] || []);
+photoIndex.personPool = (id) => Promise.resolve(PHOTOS[id] || []);
 immich.searchSmart = () => Promise.resolve(SMART);
-immich.getPhotoIdsForSelection = () => Promise.resolve(DEFAULT);
+photoIndex.selectionPool = () => Promise.resolve(DEFAULT);
+photoIndex.favoritesPool = () => Promise.resolve(DEFAULT);
 
 const ctx = { defaultPool: () => Promise.resolve(DEFAULT) };
 const tiles = ['t-a', 't-b', 't-c'];

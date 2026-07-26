@@ -10,6 +10,8 @@ const { WebSocketServer } = require('ws');
 const immich = require('./immich');
 const models = require('./models');
 const scenes = require('./scenes');
+const photoIndex = require('./photo_index');
+const picker = require('./picker');
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
 // Base per-tile swap interval; each tile jitters ±SLIDE_JITTER around it (loose sync).
@@ -117,7 +119,7 @@ let poolPromise = null;
 function ensurePool() {
   if (poolIds.length) { return Promise.resolve(poolIds); }
   if (!poolPromise) {
-    poolPromise = immich.getPhotoIdsForSelection([]).then(function (ids) {
+    poolPromise = photoIndex.selectionPool([]).then(function (ids) {
       poolIds = ids; console.log('[mosaic] photo pool loaded: ' + ids.length + ' ids'); return ids;
     }).catch(function (err) { console.error('[mosaic] pool load failed: ' + err.message); poolPromise = null; return []; });
   }
@@ -154,6 +156,18 @@ function poolFor(id) {
   // during a "moment", shared-pool scenes narrow the whole wall to one event
   if (engine.moment && SHARED_SCENES.indexOf(engine.scene) !== -1) { return engine.moment.ids; }
   var p = engine.pools[id]; return (p && p.length) ? p : poolIds;
+}
+
+// Year buckets for a tile's pool, memoised on the array identity. Shared-pool
+// scenes hand every tile the same array (see shareAll in scenes.js), so this is
+// one grouping pass per scene resolve — not per tile, and not per swap.
+var bucketMemo = new WeakMap();
+function bucketsFor(pool) {
+  var cached = bucketMemo.get(pool);
+  if (cached) { return cached; }
+  var b = picker.groupByYear(pool, immich.takenAt);
+  bucketMemo.set(pool, b);
+  return b;
 }
 
 // --- moments: every N changes, gather the wall around one event (photos taken
@@ -203,43 +217,23 @@ function noteShown(pid) {
   recentShown.push(pid); recentSet[pid] = true;
   while (recentShown.length > RECENT_CAP) { delete recentSet[recentShown.shift()]; }
 }
-// The most recently shown ids OF THIS POOL (up to 75% of it). Computed per
-// pool — not from the raw tail of the global history — so scenes with many
-// pools (different people) or scene switches don't dilute a pool's protection.
-function recentWindow(pool) {
-  var inPool = {};
-  for (var i = 0; i < pool.length; i++) { inPool[pool[i]] = true; }
-  var win = Math.floor(pool.length * 0.75);
-  var m = {}, n = 0;
-  for (var j = recentShown.length - 1; j >= 0 && n < win; j--) {
-    if (inPool[recentShown[j]]) { m[recentShown[j]] = true; n++; }
-  }
-  return m;
-}
-// Pick a photo for one tile: not on any other tile right now, not recently
-// shown, not this tile's current photo. When the pool is too small for a
-// fresh pick, rotate through the least-recently-shown instead of gambling —
-// repeats then space out as far as the pool allows. Applies to every photo
-// scene, since they all resolve to pools and are picked here.
+// Pick a photo for one tile. Year-first: see picker.js for why. During a
+// "moment" the whole wall is one event — a single year — so stratifying is a
+// no-op and we draw uniformly instead. Freshness rules are unchanged; they now
+// live in picker.js and run per year bucket rather than over the whole pool.
 function pickPhoto(id) {
   var pool = poolFor(id);
   if (!pool.length) { return null; }
   var t = tiles.get(id) || {};
   var onWall = {};
   tiles.forEach(function (ot, oid) { if (oid !== id && ot.online && ot.lastShow) { onWall[ot.lastShow] = true; } });
-  var free = pool.filter(function (pid) { return !onWall[pid] && pid !== t.lastShow; });
-  var recentW = recentWindow(pool);
-  var fresh = free.filter(function (pid) { return !recentW[pid]; });
-  if (fresh.length) { return randomFrom(fresh); }
-  if (free.length) {
-    // everything eligible was shown lately: prefer the stalest third
-    var pos = {};
-    recentShown.forEach(function (pid, i) { pos[pid] = i; });
-    free.sort(function (a, b) { return (pos[a] != null ? pos[a] : -1) - (pos[b] != null ? pos[b] : -1); });
-    return randomFrom(free.slice(0, Math.max(1, Math.ceil(free.length * 0.3))));
-  }
-  var any = pool.filter(function (pid) { return pid !== t.lastShow; });
-  return any.length ? randomFrom(any) : pool[0]; // pool of one — nothing else to show
+  var opts = { onWall: onWall, lastShow: t.lastShow, recentShown: recentShown };
+  var inMoment = engine.moment && SHARED_SCENES.indexOf(engine.scene) !== -1;
+  var pid = inMoment ? picker.pickUniform(pool, opts) : picker.pickFromBuckets(bucketsFor(pool), opts);
+  if (pid) { return pid; }
+  // pool of one, or everything blocked — show something rather than nothing
+  var any = pool.filter(function (p) { return p !== t.lastShow; });
+  return any.length ? randomFrom(any) : pool[0];
 }
 
 // Show the next photo on one tile, per the active scene.
@@ -289,7 +283,7 @@ function splitMsg(id, pid, wall, at, info) {
 }
 function pushSplit(at) {
   if (!poolIds.length) { return; }
-  var recentW = recentWindow(poolIds);
+  var recentW = picker.recentWindow(poolIds, recentShown);
   var cands = poolIds.filter(function (p) { return p !== engine.splitImg && !recentW[p]; });
   if (!cands.length) { cands = poolIds.filter(function (p) { return p !== engine.splitImg; }); }
   var pid = cands.length ? randomFrom(cands) : randomFrom(poolIds);
@@ -550,18 +544,31 @@ function initSchedule() {
 }
 setInterval(applySchedule, 30000);
 
-// --- keep pools fresh: new Immich uploads appear without touching the admin ---
+// --- keep pools fresh: new uploads appear without touching the admin --------
+// Completed years never change, so the hourly tick is two delta requests, not
+// a rescan. FULL_RESCAN_MS re-walks the current year only, to pick up anything
+// the deltas missed.
 const POOL_REFRESH_MS = parseInt(process.env.POOL_REFRESH_MS || '3600000', 10);
+const FULL_RESCAN_MS = parseInt(process.env.FULL_RESCAN_MS || '86400000', 10);
+
 setInterval(function () {
   if (engine.scene === 'mirror' || engine.scene === 'art') { return; }
-  immich.clearListCaches();
-  immich.getPhotoIdsForSelection([]).then(function (ids) {
-    if (ids && ids.length) { poolIds = ids; }
-    return resolveScene();
-  }).then(function () {
+  photoIndex.applyDeltas().then(function (res) {
+    if (!res.added && !res.removed) { return null; }
+    immich.clearListCaches();
+    poolIds = photoIndex.pool('library');
     console.log('[mosaic] pools refreshed (' + poolIds.length + ' in default pool)');
-  }).catch(function (err) { console.error('[mosaic] pool refresh failed: ' + err.message); });
+    return resolveScene();
+  }).catch(function (err) { console.error('[mosaic] delta refresh failed: ' + err.message); });
 }, POOL_REFRESH_MS);
+
+setInterval(function () {
+  var year = new Date().getFullYear();
+  var ix = photoIndex._indexes()['library'];
+  if (ix) { delete ix.complete[String(year)]; ix.done = false; }
+  photoIndex.ensure('library', { takenAfter: new Date(Date.UTC(year, 0, 1)).toISOString() })
+    .catch(function (err) { console.error('[mosaic] current-year rescan failed: ' + err.message); });
+}, FULL_RESCAN_MS);
 
 function effectiveOrientation(id) {
   var pe = store.tiles[id] || {};
@@ -653,7 +660,20 @@ function stateSnapshot() {
   return { tiles: list, wall: wall };
 }
 function sceneSnapshot() {
+  // Year spread of what the wall is actually drawing from, so the admin can
+  // show the coverage rather than making you watch the wall to judge it.
+  var activePool = poolIds;
+  var onlineIds = onlineTileIds();
+  if (onlineIds.length && engine.pools[onlineIds[0]] && engine.pools[onlineIds[0]].length) {
+    activePool = engine.pools[onlineIds[0]];
+  }
+  var years = {};
+  var groups = picker.groupByYear(activePool, immich.takenAt);
+  for (var gy in groups) {
+    if (Object.prototype.hasOwnProperty.call(groups, gy)) { years[gy] = groups[gy].length; }
+  }
   return {
+    years: years,
     scenes: scenes.SCENES, active: engine.scene, config: engine.config, info: engine.info,
     timing: engine.timing, timings: TIMINGS, looks: LOOKS, transitions: TRANSITIONS, effects: EFFECTS, artworks: ARTS, artPalettes: ART_PALETTES, display: engine.display,
     slideSec: Math.round((engine.slideMs / 1000) * 10) / 10, camera: engine.cameraOnline,
@@ -790,7 +810,7 @@ const server = http.createServer(function (req, res) {
     return immich.getFocus(fid).then(function (f) { sendJson(res, f); });
   }
   var imgMatch = p.match(/^\/img\/([a-f0-9-]+)$/);
-  if (imgMatch) { var size = u.query.size === 'thumbnail' ? 'thumbnail' : 'preview'; return immich.proxyImage(res, imgMatch[1], size); }
+  if (imgMatch) { var size = u.query.size === 'thumbnail' ? 'thumbnail' : 'preview'; return immich.proxyImage(res, imgMatch[1], size, photoIndex.evict); }
 
   res.writeHead(404); res.end('Not Found');
 });
@@ -882,8 +902,24 @@ server.listen(PORT, function () {
   console.log('[mosaic] Immich: ' + immich.IMMICH_URL);
   console.log('[mosaic] admin: http://<host>:' + PORT + '/admin');
   console.log('[mosaic] scene: ' + engine.scene + ', timing: ' + engine.timing + ', look: ' + engine.display.look);
-  ensurePool().then(resolveScene).then(applyTiming);
+  // A background scan finishing means the pool just grew — re-derive it and
+  // re-resolve, so the wall draws from the full year range rather than the
+  // first page. Re-derives via selectionPool rather than reading the 'library'
+  // index directly: with PERSON_IDS set the default pool is a union of person
+  // indexes, and those complete independently.
+  photoIndex.onUpdate(function () {
+    photoIndex.selectionPool([]).then(function (ids) {
+      if (ids && ids.length) { poolIds = ids; }
+      return resolveScene();
+    }).catch(function (err) { console.error('[mosaic] pool re-derive failed: ' + err.message); });
+  });
+  photoIndex.init().then(ensurePool).then(resolveScene).then(applyTiming);
   applySpotlight();
   initSchedule();
 });
+
+// Persist the index before dying, so a restart doesn't rescan 200k photos.
+function shutdown() { photoIndex.flush().then(function () { process.exit(0); }); }
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 server.on('error', function (err) { console.error('[mosaic] server error: ' + err.message); process.exit(1); });

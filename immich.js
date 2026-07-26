@@ -11,7 +11,6 @@ const PERSON_IDS = (process.env.PERSON_IDS || '').split(',').map(function (s) { 
 const LIST_CACHE_TTL = parseInt(process.env.LIST_CACHE_TTL || '600000', 10);
 
 const focusCache = {};
-const personPhotosCache = {};
 let peopleCache = null;
 
 function immichRequest(apiPath, method, body) {
@@ -151,50 +150,6 @@ function getPeople() {
   });
 }
 
-// Immich "favorites" (isFavorite=true) — a curated best-of selection. Cached.
-let favCache = null;
-function getFavorites() {
-  var now = Date.now();
-  if (favCache && (now - favCache.ts) < LIST_CACHE_TTL) { return Promise.resolve(favCache.ids); }
-  return searchMetadata({ isFavorite: true }).then(function (items) {
-    var ids = idsFrom(items); favCache = { ids: ids, ts: now }; return ids;
-  }).catch(function (err) { console.error('[immich] favorites: ' + err.message); return []; });
-}
-
-function getPersonPhotoIds(personId) {
-  const now = Date.now();
-  const cached = personPhotosCache[personId];
-  if (cached && (now - cached.ts) < LIST_CACHE_TTL) {
-    return Promise.resolve(cached.ids);
-  }
-  return searchMetadata({ personIds: [personId] }).then(function (items) {
-    var ids = idsFrom(items);
-    personPhotosCache[personId] = { ids: ids, ts: now };
-    return ids;
-  }).catch(function (err) {
-    console.error('[immich] person ' + personId + ': ' + err.message);
-    return [];
-  });
-}
-
-// Deduped union of ids for a selection; falls back to env default, then all photos.
-function getPhotoIdsForSelection(personIds) {
-  var ids = (personIds && personIds.length) ? personIds : PERSON_IDS;
-  if (!ids.length) {
-    return searchMetadata({}).then(idsFrom);
-  }
-  return Promise.all(ids.map(getPersonPhotoIds)).then(function (lists) {
-    var seen = {}, out = [];
-    for (var i = 0; i < lists.length; i++) {
-      for (var j = 0; j < lists[i].length; j++) {
-        var id = lists[i][j];
-        if (!seen[id]) { seen[id] = true; out.push(id); }
-      }
-    }
-    return out;
-  });
-}
-
 // "On this day" — today's date across the years. Prefers Immich's memory-lane
 // endpoint (one call); falls back to a per-year date-window search. Cached per day.
 let onThisDayCache = null;
@@ -255,9 +210,7 @@ function getAssetInfo(assetId) {
 function clearListCaches() {
   var k;
   for (k in smartCache) { delete smartCache[k]; }
-  for (k in personPhotosCache) { delete personPhotosCache[k]; }
   peopleCache = null;
-  favCache = null;
   onThisDayCache = null;
 }
 
@@ -302,7 +255,7 @@ function getFocus(assetId) {
 }
 
 // Stream an Immich thumbnail/original through to the client.
-function proxyImage(res, assetId, size) {
+function proxyImage(res, assetId, size, onGone) {
   var upstream = IMMICH_URL + '/api/assets/' + assetId + '/thumbnail?size=' + (size || 'preview');
   var req = http.request(upstream, { headers: { 'X-Api-Key': API_KEY } });
   req.on('error', function (err) {
@@ -310,6 +263,9 @@ function proxyImage(res, assetId, size) {
     if (!res.headersSent) { res.writeHead(502); res.end('Image unavailable'); }
   });
   req.on('response', function (up) {
+    // 404/400 means the asset is really gone — prune it. 5xx and timeouts are
+    // transient and must never shrink the pool.
+    if ((up.statusCode === 404 || up.statusCode === 400) && onGone) { onGone(assetId); }
     res.writeHead(up.statusCode, up.headers);
     up.pipe(res);
   });
@@ -320,9 +276,6 @@ module.exports = {
   IMMICH_URL: IMMICH_URL,
   PERSON_IDS: PERSON_IDS,
   getPeople: getPeople,
-  getPersonPhotoIds: getPersonPhotoIds,
-  getPhotoIdsForSelection: getPhotoIdsForSelection,
-  getFavorites: getFavorites,
   searchSmart: searchSmart,
   getFocus: getFocus,
   getOnThisDay: getOnThisDay,

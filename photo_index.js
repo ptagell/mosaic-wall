@@ -138,6 +138,34 @@ function isComplete(key) { return !!(indexes[key] && indexes[key].done); }
 function scanning(key) { return !!(indexes[key] && indexes[key].scanning); }
 function onUpdate(cb) { if (typeof cb === 'function') { updateCbs.push(cb); } }
 
+// --- pools for scenes ------------------------------------------------------
+const PERSON_IDS = immich.PERSON_IDS;
+
+function libraryPool() { return ensure('library', {}); }
+
+function personPool(personId) {
+  registerPerson(personId);
+  return ensure('person:' + personId, { personIds: [personId] });
+}
+
+function favoritesPool() { return ensure('favorites', { isFavorite: true }); }
+
+// Deduped union for a selection; falls back to the env default, then the whole
+// library — same contract as the old immich.getPhotoIdsForSelection.
+function selectionPool(personIds) {
+  var ids = (personIds && personIds.length) ? personIds : PERSON_IDS;
+  if (!ids.length) { return libraryPool(); }
+  return Promise.all(ids.map(personPool)).then(function (lists) {
+    var seen = {}, out = [];
+    for (var i = 0; i < lists.length; i++) {
+      for (var j = 0; j < lists[i].length; j++) {
+        if (!seen[lists[i][j]]) { seen[lists[i][j]] = true; out.push(lists[i][j]); }
+      }
+    }
+    return out;
+  });
+}
+
 // --- deltas ----------------------------------------------------------------
 // A completed year cannot change on its own, but three things do change it:
 // a back-dated archive import, an EXIF date correction, and a deletion. The
@@ -352,6 +380,10 @@ module.exports = {
   applyDeltas: applyDeltas,
   evict: evict,
   registerPerson: registerPerson,
+  libraryPool: libraryPool,
+  personPool: personPool,
+  favoritesPool: favoritesPool,
+  selectionPool: selectionPool,
   _reset: _reset,
   _setDataDir: _setDataDir,
   _indexes: function () { return indexes; }

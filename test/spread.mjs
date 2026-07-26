@@ -69,6 +69,25 @@ function run() {
   // --- empty buckets
   check('empty buckets return null', picker.pickFromBuckets({}, { onWall: {}, lastShow: null, recentShown: [] }) === null);
 
+  // --- a real library has years holding one or two photos. Those must appear,
+  // but must not dominate: uniform year choice alone would give a lone 2004
+  // photo ~1/N of every show. The cooldown floor keeps it occasional.
+  const REAL = { 2004: 1, 2009: 15, 2012: 1153, 2019: 278, 2025: 3876 };
+  const realBuckets = {};
+  for (const y in REAL) { realBuckets[y] = Array.from({ length: REAL[y] }, (_, i) => `${y}-${i}`); }
+  const realCounts = {};
+  const realRecent = [];
+  const REAL_DRAWS = 6000;
+  for (let i = 0; i < REAL_DRAWS; i++) {
+    const id = picker.pickFromBuckets(realBuckets, { onWall: {}, lastShow: null, recentShown: realRecent });
+    realCounts[yearOf(id)] = (realCounts[yearOf(id)] || 0) + 1;
+    realRecent.push(id); if (realRecent.length > 150) realRecent.shift();
+  }
+  const loneShare = (realCounts['2004'] || 0) / REAL_DRAWS;
+  check('a one-photo year still appears', (realCounts['2004'] || 0) > 0, `${realCounts['2004']} shows`);
+  check('a one-photo year does not dominate', loneShare < 0.05, `${(loneShare * 100).toFixed(2)}% of shows  ${JSON.stringify(realCounts)}`);
+  check('dense years still share airtime broadly', Object.keys(realCounts).length === 5, JSON.stringify(realCounts));
+
   // --- groupByYear buckets by timestamp and handles undated photos
   const g = picker.groupByYear(['p', 'q', 'r'], (id) => (id === 'p' ? Date.parse('2018-01-01') : id === 'q' ? Date.parse('2021-01-01') : null));
   check('groupByYear buckets by year', (g['2018'] || []).join() === 'p' && (g['2021'] || []).join() === 'q', JSON.stringify(g));

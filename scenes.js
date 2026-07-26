@@ -9,6 +9,7 @@
 //   info  : scene-specific summary for the admin UI (selected person, assignments…)
 //   ctx   : { defaultPool() -> Promise<[ids]> }  (server-owned, cached default pool)
 const immich = require('./immich');
+const photoIndex = require('./photo_index');
 
 // Admin-facing catalogue. Order is display order.
 var SCENES = [
@@ -46,7 +47,7 @@ function resolvePools(scene, config, tileIds, ctx) {
   config = config || {};
   tileIds = (tileIds || []).slice().sort(); // deterministic assignment order
   ctx = ctx || {};
-  var getDefault = ctx.defaultPool || function () { return immich.getPhotoIdsForSelection([]); };
+  var getDefault = ctx.defaultPool || function () { return photoIndex.selectionPool([]); };
 
   // NB: we still resolve content (and its counts) with zero tiles, so the admin can
   // show "N matches" before any tile connects; pools just come out empty.
@@ -60,7 +61,7 @@ function resolvePools(scene, config, tileIds, ctx) {
         if (!chosen) { chosen = { id: config.personId, name: config.personId }; }
       } else if (people.length) { chosen = people[0]; }
       if (!chosen) { return { pools: shareAll(tileIds, fallback), info: { personId: null } }; }
-      return immich.getPersonPhotoIds(chosen.id).then(function (ids) {
+      return photoIndex.personPool(chosen.id).then(function (ids) {
         var pools = fillBlanks(shareAll(tileIds, ids), tileIds, fallback);
         return { pools: pools, info: { personId: chosen.id, personName: chosen.name, count: ids.length } };
       });
@@ -81,7 +82,7 @@ function resolvePools(scene, config, tileIds, ctx) {
       var assign = {}, need = {};
       tileIds.forEach(function (id, i) { var p = people[i % people.length]; assign[id] = p; need[p.id] = p; });
       var pids = Object.keys(need);
-      return Promise.all(pids.map(function (pid) { return immich.getPersonPhotoIds(pid); })).then(function (lists) {
+      return Promise.all(pids.map(function (pid) { return photoIndex.personPool(pid); })).then(function (lists) {
         var byPid = {};
         pids.forEach(function (pid, i) { byPid[pid] = lists[i] || []; });
         var pools = {}, assignments = {};
@@ -117,7 +118,7 @@ function resolvePools(scene, config, tileIds, ctx) {
   }
 
   if (scene === 'favorites') {
-    return Promise.all([immich.getFavorites(), getDefault()]).then(function (r) {
+    return Promise.all([photoIndex.favoritesPool(), getDefault()]).then(function (r) {
       var ids = r[0] || [], fallback = r[1] || [];
       return { pools: fillBlanks(shareAll(tileIds, ids), tileIds, fallback), info: { count: ids.length } };
     });

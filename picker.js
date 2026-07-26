@@ -12,10 +12,17 @@
 
 // The most recently shown ids drawn from `ids` (up to 75% of them). Scoped to
 // one year's bucket so the 75% budget is per-year rather than pool-wide.
+//
+// The max(1,…) matters: a real library has years holding a single photo, and
+// floor(1 * 0.75) is 0 — no cooldown at all, so that one photo would be picked
+// every time its year came up, roughly 1/N of all shows. With a floor of 1 the
+// photo cools down after showing, its year yields to another, and it resurfaces
+// only once it ages out of the global recent history. Sparse years stay
+// represented without any one photo dominating.
 function recentWindow(ids, recentShown) {
   var inPool = {};
   for (var i = 0; i < ids.length; i++) { inPool[ids[i]] = true; }
-  var win = Math.floor(ids.length * 0.75);
+  var win = Math.max(1, Math.floor(ids.length * 0.75));
   var m = {}, n = 0;
   for (var j = recentShown.length - 1; j >= 0 && n < win; j--) {
     if (inPool[recentShown[j]] && !m[recentShown[j]]) { m[recentShown[j]] = true; n++; }
