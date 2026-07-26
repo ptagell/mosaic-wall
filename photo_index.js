@@ -138,6 +138,120 @@ function isComplete(key) { return !!(indexes[key] && indexes[key].done); }
 function scanning(key) { return !!(indexes[key] && indexes[key].scanning); }
 function onUpdate(cb) { if (typeof cb === 'function') { updateCbs.push(cb); } }
 
+// --- deltas ----------------------------------------------------------------
+// A completed year cannot change on its own, but three things do change it:
+// a back-dated archive import, an EXIF date correction, and a deletion. The
+// first two bump updatedAt; the third only shows up under trashedAfter. Both
+// are single requests per tick regardless of how many people are tracked,
+// because withPeople:true lets one pass file into every index at once.
+var trackedPeople = {};
+var trashedSupported = true;
+function registerPerson(personId) { if (personId) { trackedPeople[personId] = true; } }
+
+// Remove an id from one index's buckets. Returns true if it was there.
+function removeFrom(ix, id) {
+  if (!ix.seen[id]) { return false; }
+  delete ix.seen[id];
+  for (var y in ix.years) {
+    if (!Object.prototype.hasOwnProperty.call(ix.years, y)) { continue; }
+    var at = ix.years[y].indexOf(id);
+    if (at !== -1) { ix.years[y].splice(at, 1); return true; }
+  }
+  return true;
+}
+
+function evict(id) {
+  for (var key in indexes) {
+    if (Object.prototype.hasOwnProperty.call(indexes, key)) { removeFrom(indexes[key], id); }
+  }
+  delete immich.taken[id];
+  markDirty();
+}
+
+// Put an id into one index's correct year bucket, moving it if it was elsewhere.
+function refile(ix, id) {
+  removeFrom(ix, id);
+  var y = yearOf(id);
+  if (!ix.years[y]) { ix.years[y] = []; }
+  ix.years[y].push(id);
+  ix.seen[id] = true;
+}
+
+function keysForAsset(asset) {
+  var keys = ['library'];
+  var people = asset.people || [];
+  for (var i = 0; i < people.length; i++) {
+    var pid = people[i] && people[i].id;
+    if (pid && trackedPeople[pid] && indexes['person:' + pid]) { keys.push('person:' + pid); }
+  }
+  if (asset.isFavorite && indexes['favorites']) { keys.push('favorites'); }
+  return keys;
+}
+
+function watermark() {
+  var lib = indexes['library'];
+  return (lib && lib.lastDelta) || null;
+}
+
+function setWatermark(iso) {
+  for (var key in indexes) {
+    if (Object.prototype.hasOwnProperty.call(indexes, key)) { indexes[key].lastDelta = iso; }
+  }
+}
+
+// One updatedAfter pass + one trashedAfter pass. On failure the watermark is
+// left where it was, so the next tick retries the same window — advancing it
+// would drop that window's uploads permanently.
+function applyDeltas() {
+  var since = watermark();
+  var now = new Date().toISOString();
+  if (!since) { setWatermark(now); markDirty(); return Promise.resolve({ added: 0, removed: 0 }); }
+
+  var added = 0, removed = 0;
+  var updatedP = immich.searchMetadata({ updatedAfter: since, withPeople: true }, { paginate: true })
+    .then(function (items) {
+      for (var i = 0; i < items.length; i++) {
+        var a = items[i];
+        if (!a || !a.id) { continue; }
+        var keys = keysForAsset(a);
+        for (var k = 0; k < keys.length; k++) {
+          var ix = indexes[keys[k]];
+          if (ix) { refile(ix, a.id); }
+        }
+        added++;
+      }
+    });
+
+  var trashedP = !trashedSupported ? Promise.resolve() :
+    immich.searchMetadata({ trashedAfter: since, withDeleted: true }, { paginate: true })
+      .then(function (items) {
+        for (var i = 0; i < items.length; i++) {
+          if (items[i] && items[i].id) { evict(items[i].id); removed++; }
+        }
+      })
+      .catch(function (err) {
+        // Only a 400/404 means this Immich doesn't know the filter. Anything
+        // else (network, 5xx) is transient — disabling on those would silently
+        // give up on deletion detection for the rest of the process lifetime.
+        if (/Immich API error (400|404)/.test(err.message)) {
+          console.log('[index] trashedAfter unsupported, relying on lazy eviction');
+          trashedSupported = false;
+          return;
+        }
+        throw err;
+      });
+
+  return Promise.all([updatedP, trashedP]).then(function () {
+    setWatermark(now);
+    markDirty();
+    console.log('[index] delta: +' + added + ' -' + removed);
+    return { added: added, removed: removed };
+  }).catch(function (err) {
+    console.error('[index] delta failed, watermark held at ' + since + ': ' + err.message);
+    return { added: 0, removed: 0 };
+  });
+}
+
 // --- persistence -----------------------------------------------------------
 // The whole index is one JSON file next to registry.json. Writes are atomic
 // (temp + rename) and debounced, because stringifying a 200k-id structure is
@@ -217,7 +331,7 @@ function markDirty() {
 }
 
 function _reset() {
-  indexes = {}; updateCbs = [];
+  indexes = {}; updateCbs = []; trackedPeople = {}; trashedSupported = true;
   if (writeTimer) { clearTimeout(writeTimer); writeTimer = null; }
   for (var id in immich.taken) {
     if (Object.prototype.hasOwnProperty.call(immich.taken, id)) { delete immich.taken[id]; }
@@ -235,6 +349,9 @@ module.exports = {
   init: init,
   flush: flush,
   markDirty: markDirty,
+  applyDeltas: applyDeltas,
+  evict: evict,
+  registerPerson: registerPerson,
   _reset: _reset,
   _setDataDir: _setDataDir,
   _indexes: function () { return indexes; }
