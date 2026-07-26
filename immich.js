@@ -43,29 +43,63 @@ function immichRequest(apiPath, method, body) {
   });
 }
 
-function searchMetadata(filter) {
+// Swappable transport so tests can drive searchMetadata without a live Immich.
+let requestImpl = immichRequest;
+function _setRequest(fn) { requestImpl = fn || immichRequest; }
+
+// One page of /api/search/metadata. Returns raw asset objects.
+function searchPage(filter, page) {
   const body = { size: PAGE_SIZE, type: 'IMAGE' };
   for (const k in filter) {
     if (Object.prototype.hasOwnProperty.call(filter, k)) { body[k] = filter[k]; }
   }
-  return immichRequest('/api/search/metadata', 'POST', body).then(function (data) {
+  if (page > 1) { body.page = page; }
+  return requestImpl('/api/search/metadata', 'POST', body).then(function (data) {
     return (data && data.assets && data.assets.items) ? data.assets.items : [];
   });
 }
 
+// searchMetadata(filter)                    -> first page only (legacy behaviour)
+// searchMetadata(filter, { paginate:true }) -> every page, walking until a short one
+// opts.onPage(items, pageNum) is called per page so callers can index progressively.
+// opts.maxPages bounds the walk.
+function searchMetadata(filter, opts) {
+  opts = opts || {};
+  if (!opts.paginate) {
+    return searchPage(filter, 1).then(function (items) { recordTaken(items); return items; });
+  }
+  var all = [];
+  var limit = opts.maxPages || Infinity;
+  function step(page) {
+    return searchPage(filter, page).then(function (items) {
+      recordTaken(items);
+      if (items.length) {
+        all = all.concat(items);
+        if (opts.onPage) { opts.onPage(items, page); }
+      }
+      // a short page means we've reached the end; a full page might not have
+      if (items.length < PAGE_SIZE || page >= limit) { return all; }
+      return step(page + 1);
+    });
+  }
+  return step(1);
+}
+
 // When photos were taken (id -> epoch ms), harvested from every search result
 // that passes through. Powers "moments" (clusters of photos from one event).
-const takenMap = {};
+const taken = {};
 function recordTaken(items) {
   for (var i = 0; i < items.length; i++) {
     var it = items[i];
     if (!it || !it.id) { continue; }
     var ts = Date.parse(it.localDateTime || it.fileCreatedAt || '');
-    if (isFinite(ts)) { takenMap[it.id] = ts; }
+    if (isFinite(ts)) { taken[it.id] = ts; }
   }
-  capCache(takenMap, 20000);
+  // Deliberately uncapped: photo_index needs a year for every pooled id, and
+  // capCache evicts in insertion order — i.e. the oldest photos first, exactly
+  // the ones this feature exists to surface. photo_index persists this map.
 }
-function takenAt(id) { return takenMap[id] || null; }
+function takenAt(id) { return taken[id] || null; }
 
 function idsFrom(items) {
   recordTaken(items);
@@ -207,7 +241,7 @@ function getAssetInfo(assetId) {
     var date = isFinite(ts) ? new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
     var place = [ex.city, ex.country].filter(Boolean).join(', ');
     var info = { date: date, place: place };
-    if (isFinite(ts)) { takenMap[assetId] = ts; }
+    if (isFinite(ts)) { taken[assetId] = ts; }
     infoCache[assetId] = info;
     capCache(infoCache, 8000);
     return info;
@@ -293,7 +327,10 @@ module.exports = {
   getFocus: getFocus,
   getOnThisDay: getOnThisDay,
   getAssetInfo: getAssetInfo,
+  searchMetadata: searchMetadata,
   takenAt: takenAt,
+  taken: taken,
   clearListCaches: clearListCaches,
-  proxyImage: proxyImage
+  proxyImage: proxyImage,
+  _setRequest: _setRequest
 };
