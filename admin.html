@@ -33,6 +33,17 @@
     .scenebtn { background:var(--card2); border:1px solid var(--line); border-radius:999px; padding:6px 14px; cursor:pointer; }
     .scenebtn:hover { border-color:var(--accent); }
     .scenebtn.active { background:var(--accent); color:#04202a; border-color:var(--accent); font-weight:650; }
+    /* year spread: one bar per year in the active pool, so the time coverage is
+       visible at a glance instead of needing an hour of watching the wall */
+    .yearwrap { margin-top:14px; }
+    .yearbars { display:flex; align-items:flex-end; gap:2px; height:56px; padding-bottom:14px; overflow-x:auto; }
+    .yearbar { flex:1 0 8px; min-width:8px; background:var(--accent); opacity:0.75; border-radius:2px 2px 0 0;
+               min-height:2px; position:relative; }
+    .yearbar:hover { opacity:1; }
+    .yearbar.sparse { background:var(--amber); }
+    .yearbar b { position:absolute; bottom:-13px; left:50%; transform:translateX(-50%);
+                 font-size:0.58rem; font-weight:400; color:var(--ink2);
+                 font-family:ui-monospace,Menlo,Consolas,monospace; }
     .peoplelist { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:3px 14px; max-height:160px; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:9px 11px; background:var(--card); margin-top:5px; }
     .peoplelist label { display:flex; gap:6px; align-items:center; color:var(--ink); font-size:0.82rem; cursor:pointer; }
     .peoplelist input { width:auto; }
@@ -85,6 +96,10 @@
         <span class="meta" id="sceneinfo" style="margin-left:auto"></span>
       </div>
       <p class="meta" id="scenedesc" style="margin:8px 2px 0"></p>
+      <div class="yearwrap" id="yearwrap">
+        <span class="meta" id="yearlabel">year spread</span>
+        <div class="yearbars" id="yearbars"></div>
+      </div>
       <div class="bar" style="margin-top:8px">
         <label class="meta" id="personwrap" style="display:none">person
           <select id="personSel"></select>
@@ -506,6 +521,7 @@
       if (a === 'search') { const si = document.getElementById('searchInput'); if (document.activeElement !== si) si.value = (sceneState.config && sceneState.config.query) || ''; }
       if (a === 'different-people') renderPeopleList();
       renderSceneInfo();
+      renderYears();
     }
     let peopleTimer = null;
     let peopleNoneMode = false; // "None" clears the ticks locally; nothing posts until a person is ticked
@@ -575,6 +591,32 @@
       if (sceneState.sleeping) txt = '● asleep (schedule)' + (txt ? ' · ' + txt : '');
       document.getElementById('sceneinfo').textContent = txt;
     }
+    // Bars are scaled to the largest year, so a wall drawing only from recent
+    // photos shows one or two bars and a well-spread pool shows a full run.
+    // Sparse years (< 2% of the biggest) are ambered — they're represented, but
+    // the picker deliberately rations them so one photo can't dominate.
+    function renderYears() {
+      const years = sceneState.years || {};
+      const wrap = document.getElementById('yearwrap');
+      const bars = document.getElementById('yearbars');
+      const label = document.getElementById('yearlabel');
+      if (!wrap || !bars) return;
+      const keys = Object.keys(years).filter((k) => k !== 'unknown').sort();
+      if (!keys.length) { wrap.style.display = 'none'; return; }
+      wrap.style.display = '';
+      const max = Math.max.apply(null, keys.map((k) => years[k]));
+      const total = Object.keys(years).reduce((n, k) => n + years[k], 0);
+      const unknown = years.unknown || 0;
+      label.textContent = 'year spread · ' + keys[0] + '–' + keys[keys.length - 1]
+        + ' · ' + total.toLocaleString() + ' photos' + (unknown ? ' (' + unknown + ' undated)' : '');
+      bars.innerHTML = keys.map((k) => {
+        const pct = Math.max(3, Math.round((years[k] / max) * 100));
+        const sparse = years[k] / max < 0.02 ? ' sparse' : '';
+        return '<div class="yearbar' + sparse + '" style="height:' + pct + '%"'
+             + ' title="' + k + ': ' + years[k].toLocaleString() + (years[k] === 1 ? ' photo' : ' photos') + '">'
+             + '<b>' + String(k).slice(2) + '</b></div>';
+      }).join('');
+    }
     function applyScene(key) {
       const body = { scene: key };
       if (key === 'one-person') { const pid = document.getElementById('personSel').value; if (pid) body.personId = pid; }
@@ -588,7 +630,7 @@
     }
     function applyScenes(s) {
       if (!s || !s.scenes) return;
-      sceneState.scenes = s.scenes; sceneState.active = s.active; sceneState.config = s.config || {}; sceneState.info = s.info || {};
+      sceneState.scenes = s.scenes; sceneState.active = s.active; sceneState.config = s.config || {}; sceneState.info = s.info || {}; sceneState.years = s.years || {};
       if (s.timing) sceneState.timing = s.timing;
       if (s.artworks) sceneState.artworks = s.artworks;
       if (s.artPalettes) sceneState.artPalettes = s.artPalettes;
