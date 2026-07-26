@@ -76,9 +76,11 @@ function sanitizeSchedule(patch, base) {
 
 // --- persisted store: per-tile assignment + active scene. Survives restarts. ---
 // tiles: id -> { name, model, orientation ('portrait'|'landscape'|null=auto), place ({x,y} mm | null) }
-// scene: active scene key; sceneConfig: { personId? }
+// scene: active scene key. sceneConfigs: PER-SCENE config, keyed by scene key —
+// one shared slot meant switching scenes destroyed the previous scene's config,
+// so a different-people selection was lost the moment you looked at anything else.
 let store = {
-  tiles: {}, scene: 'random', sceneConfig: {}, timing: 'sync', display: defaultDisplay(),
+  tiles: {}, scene: 'random', sceneConfigs: {}, timing: 'sync', display: defaultDisplay(),
   slideSec: Math.round(SLIDE_INTERVAL / 1000), waveDir: 'lr', momentsEvery: 0, schedule: defaultSchedule()
 };
 function loadStore() {
@@ -86,7 +88,9 @@ function loadStore() {
     var raw = JSON.parse(fs.readFileSync(REG_FILE, 'utf8'));
     if (raw && raw.tiles) { store.tiles = raw.tiles; }
     if (raw && scenes.isScene(raw.scene)) { store.scene = raw.scene; }
-    if (raw && raw.sceneConfig && typeof raw.sceneConfig === 'object') { store.sceneConfig = raw.sceneConfig; }
+    if (raw && raw.sceneConfigs && typeof raw.sceneConfigs === 'object') { store.sceneConfigs = raw.sceneConfigs; }
+    // migrate the old single-slot config onto whichever scene was active
+    else if (raw && raw.sceneConfig && typeof raw.sceneConfig === 'object' && raw.scene) { store.sceneConfigs[raw.scene] = raw.sceneConfig; }
     if (raw && TIMINGS.indexOf(raw.timing) !== -1) { store.timing = raw.timing; }
     if (raw && typeof raw.slideSec === 'number') { store.slideSec = clampNum(raw.slideSec, store.slideSec, 2, 600); }
     if (raw && raw.display && typeof raw.display === 'object') { store.display = sanitizeDisplay(raw.display, defaultDisplay()); }
@@ -132,7 +136,7 @@ function send(ws, obj) { if (ws && ws.readyState === 1) { try { ws.send(JSON.str
 // timing: 'sync'   = one clock; every tile swaps together (default)
 //         'stagger'= each tile on its own jittered timer (calmer shimmer)
 //         'wave'   = swaps sweep across the wall by placement (left -> right)
-const engine = { scene: 'random', config: {}, pools: {}, info: {}, gen: 0, timing: 'sync', display: defaultDisplay(), splitImg: null, cameraOnline: false, lastFrame: null, lastRelay: 0, slideMs: SLIDE_INTERVAL, artIdx: -1, artPal: -1, currentArt: null, moment: null, momentCount: 0, sleeping: false, schedSlot: null };
+const engine = { scene: 'random', config: {}, pools: {}, info: {}, gen: 0, timing: 'sync', display: defaultDisplay(), splitImg: null, cameraOnline: false, lastFrame: null, lastRelay: 0, slideMs: SLIDE_INTERVAL, artIdx: -1, artPal: -1, currentArt: null, moment: null, momentCount: 0, rotation: null, rotStep: 0, sleeping: false, schedSlot: null };
 function onlineTileIds() {
   var ids = []; tiles.forEach(function (t, id) { if (t.online) { ids.push(id); } }); return ids;
 }
@@ -144,7 +148,10 @@ function resolveScene() {
   return scenes.resolvePools(engine.scene, engine.config, onlineTileIds(), { defaultPool: ensurePool })
     .then(function (res) {
       res = res || { pools: {}, info: {} };
-      if (myGen === engine.gen) { engine.pools = res.pools || {}; engine.info = res.info || {}; }
+      if (myGen === engine.gen) {
+        engine.pools = res.pools || {}; engine.info = res.info || {};
+        engine.rotation = res.rotation || null; engine.rotStep = 0;
+      }
       return res;
     })
     .catch(function (err) {
@@ -155,7 +162,31 @@ function resolveScene() {
 function poolFor(id) {
   // during a "moment", shared-pool scenes narrow the whole wall to one event
   if (engine.moment && SHARED_SCENES.indexOf(engine.scene) !== -1) { return engine.moment.ids; }
+  var rp = rotatedPool(id);
+  if (rp) { return rp; }
   var p = engine.pools[id]; return (p && p.length) ? p : poolIds;
+}
+// different-people: which person this tile shows right now. Advancing rotStep by
+// the tile count each swap walks the whole selection without two tiles ever
+// landing on the same person, so a selection larger than the wall still gets
+// everyone on screen over time.
+function personForTile(id) {
+  var rot = engine.rotation;
+  if (!rot || !rot.order.length) { return null; }
+  var order = onlineTileIds().sort();
+  var ix = order.indexOf(id);
+  if (ix === -1) { return null; }
+  return rot.order[(ix + engine.rotStep) % rot.order.length];
+}
+function rotatedPool(id) {
+  var pid = personForTile(id);
+  if (!pid) { return null; }
+  var p = engine.rotation.byPid[pid];
+  return (p && p.length) ? p : null;
+}
+function advanceRotation() {
+  if (!engine.rotation || !engine.rotation.order.length) { return; }
+  engine.rotStep += Math.max(1, onlineTileIds().length);
 }
 
 // Year buckets for a tile's pool, memoised on the array identity. Shared-pool
@@ -366,7 +397,11 @@ function scheduleTile(id) {
   // photo timers — a registering tile must not stomp them with a photo later
   if (engine.scene === 'art' || engine.scene === 'split-image' || engine.scene === 'mirror') { return; }
   var factor = 1 + (Math.random() * 2 - 1) * SLIDE_JITTER; // 1 ± jitter
-  tileTimers[id] = setTimeout(function () { pushNext(id); scheduleTile(id); }, Math.round(engine.slideMs * factor));
+  tileTimers[id] = setTimeout(function () {
+    // stagger has no wall-wide tick, so the first tile in order carries the rotation
+    if (onlineTileIds().sort()[0] === id) { advanceRotation(); }
+    pushNext(id); scheduleTile(id);
+  }, Math.round(engine.slideMs * factor));
 }
 function unschedule(id) { clearTimeout(tileTimers[id]); delete tileTimers[id]; }
 
@@ -406,6 +441,7 @@ function runCycle() {
     engine.momentCount = 0;
     tryStartMoment();
   }
+  advanceRotation();
   if (engine.timing === 'wave') {
     var d = waveDelays();
     onlineTileIds().forEach(function (id) { pushNext(id, at + (d[id] || 0)); });
@@ -496,7 +532,7 @@ function setScene(scene, config) {
   engine.scene = scene;
   engine.config = config || {};
   engine.moment = null; engine.momentCount = 0; // a new scene starts a fresh rhythm
-  store.scene = scene; store.sceneConfig = engine.config; saveStore();
+  store.scene = scene; store.sceneConfigs[scene] = engine.config; saveStore();
   return resolveScene().then(function (res) {
     applyTiming(); kickCycle();
     return res;
@@ -659,14 +695,39 @@ function stateSnapshot() {
   var wall = any ? { x: minX, y: minY, w: maxX - minX, h: maxY - minY } : null;
   return { tiles: list, wall: wall };
 }
+// Scene info with different-people assignments reflecting the CURRENT rotation
+// rather than the initial resolve, so the admin names who is on each tile now.
+function liveInfo(base) {
+  if (!engine.rotation || !engine.rotation.order.length) { return base; }
+  var live = {}, byId = {};
+  engine.rotation.names.forEach(function (p) { byId[p.id] = p; });
+  onlineTileIds().forEach(function (id) {
+    var pid = personForTile(id);
+    if (pid && byId[pid]) { live[id] = { id: pid, name: byId[pid].name }; }
+  });
+  return Object.assign({}, base || {}, { assignments: live });
+}
+
 function sceneSnapshot() {
-  // Year spread of what the wall is actually drawing from, so the admin can
-  // show the coverage rather than making you watch the wall to judge it.
-  var activePool = poolIds;
+  // Year spread of what the wall is actually drawing from. This is the UNION of
+  // every tile's pool, not the first tile's: under different-people each tile
+  // holds a different person, so reading tile 0 alone reported one person's
+  // range and appeared to shrink whenever an alphabetically-earlier person was
+  // added. Rotation pools are included so the figure covers the whole selection,
+  // not just whoever is on screen this second.
   var onlineIds = onlineTileIds();
-  if (onlineIds.length && engine.pools[onlineIds[0]] && engine.pools[onlineIds[0]].length) {
-    activePool = engine.pools[onlineIds[0]];
+  var seen = {}, activePool = [];
+  function addIds(list) {
+    for (var i = 0; i < (list || []).length; i++) {
+      if (!seen[list[i]]) { seen[list[i]] = true; activePool.push(list[i]); }
+    }
   }
+  if (engine.rotation && engine.rotation.order.length) {
+    engine.rotation.order.forEach(function (pid) { addIds(engine.rotation.byPid[pid]); });
+  } else {
+    onlineIds.forEach(function (id) { addIds(engine.pools[id]); });
+  }
+  if (!activePool.length) { activePool = poolIds; }
   var years = {};
   var groups = picker.groupByYear(activePool, immich.takenAt);
   for (var gy in groups) {
@@ -674,7 +735,8 @@ function sceneSnapshot() {
   }
   return {
     years: years,
-    scenes: scenes.SCENES, active: engine.scene, config: engine.config, info: engine.info,
+    info: liveInfo(engine.info),
+    scenes: scenes.SCENES, active: engine.scene, config: engine.config,
     timing: engine.timing, timings: TIMINGS, looks: LOOKS, transitions: TRANSITIONS, effects: EFFECTS, artworks: ARTS, artPalettes: ART_PALETTES, display: engine.display,
     slideSec: Math.round((engine.slideMs / 1000) * 10) / 10, camera: engine.cameraOnline,
     waveDir: store.waveDir, waveDirs: WAVE_DIRS, momentsEvery: store.momentsEvery,
@@ -713,7 +775,10 @@ const server = http.createServer(function (req, res) {
     return readBody(req).then(function (b) {
       var scene = String(b.scene || '');
       if (!scenes.isScene(scene)) { return sendJson(res, { error: 'unknown scene' }, 400); }
-      var cfg = {};
+      // Start from this scene's saved config so merely switching to a scene
+      // doesn't wipe its options — picking 12 people then glancing at another
+      // scene used to clear the lot. Explicit fields below still override.
+      var cfg = Object.assign({}, store.sceneConfigs[scene] || {});
       if (b.personId) { cfg.personId = String(b.personId); }
       if (Array.isArray(b.personIds)) { cfg.personIds = b.personIds.map(String).filter(Boolean); }
       if (typeof b.query === 'string') { cfg.query = b.query; }
@@ -727,7 +792,7 @@ const server = http.createServer(function (req, res) {
       // artSpeed: animation speed multiplier for the artworks
       if (b.artSpeed != null) { cfg.artSpeed = clampNum(b.artSpeed, 1, 0.25, 3); }
       return setScene(scene, cfg).then(function (resolved) {
-        var snap = sceneSnapshot(); snap.info = (resolved && resolved.info) || {};
+        var snap = sceneSnapshot(); snap.info = liveInfo((resolved && resolved.info) || {});
         sendJson(res, snap);
       });
     });
@@ -893,7 +958,7 @@ setInterval(function () {
 
 loadStore();
 engine.scene = scenes.isScene(store.scene) ? store.scene : 'random';
-engine.config = store.sceneConfig || {};
+engine.config = store.sceneConfigs[store.scene] || {};
 engine.timing = (TIMINGS.indexOf(store.timing) !== -1) ? store.timing : 'sync';
 engine.display = sanitizeDisplay(store.display || {}, defaultDisplay());
 engine.slideMs = Math.round(clampNum(store.slideSec, SLIDE_INTERVAL / 1000, 2, 600) * 1000);

@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "for f in test/paginate.mjs test/scenes.mjs test/index_scan.mjs test/index_persist.mjs test/index_delta.mjs test/spread.mjs test/smart_years.mjs; do echo \"--- $f\"; node $f || exit 1; done"
+    "test": "for f in test/paginate.mjs test/scenes.mjs test/index_scan.mjs test/index_persist.mjs test/index_delta.mjs test/spread.mjs test/smart_years.mjs test/people_rotation.mjs; do echo \"--- $f\"; node $f || exit 1; done"
   },
   "dependencies": {
     "ws": "^8.18.0"

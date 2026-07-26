@@ -25,10 +25,38 @@ function run() {
     recent.push(id); if (recent.length > 150) recent.shift();
   }
   const years = Object.keys(SIZES);
-  const expected = DRAWS / years.length;
-  const worst = Math.max(...years.map((y) => Math.abs((counts[y] || 0) - expected) / expected));
   check('every year gets a share', years.every((y) => counts[y] > 0), JSON.stringify(counts));
-  check('year shares within 25% of uniform', worst < 0.25, `worst deviation ${(worst * 100).toFixed(1)}%  ${JSON.stringify(counts)}`);
+
+  // Years with enough photos to sustain a fair share must get equal airtime.
+  // Years that DON'T are capped by arithmetic, not by policy: the no-repeat
+  // history is 150 deep, so a 20-photo year can supply at most 20 of any 150
+  // consecutive shows (13%) — below an even 25% share of four years. Forcing it
+  // higher would mean reshowing its photos inside the no-repeat window, which is
+  // the guarantee test/unique.mjs enforces. Freshness wins; the cap is honest.
+  const dense = years.filter((y) => SIZES[y] >= 150);
+  const denseShares = dense.map((y) => counts[y] / DRAWS);
+  const spread = Math.max(...denseShares) - Math.min(...denseShares);
+  check('years with enough photos share airtime evenly', spread < 0.05,
+    `spread ${(spread * 100).toFixed(1)}pp across ${dense.join(',')}  ${JSON.stringify(counts)}`);
+
+  // The sparse year is capped, but must still be lifted far above the
+  // proportional share a flat draw would give it — that's the whole point.
+  const total = years.reduce((n, y) => n + SIZES[y], 0);
+  const sparse = years.find((y) => SIZES[y] < 150);
+  const lift = (counts[sparse] / DRAWS) / (SIZES[sparse] / total);
+  check('a sparse year is lifted far above its proportional share', lift > 20,
+    `${sparse}: ${(counts[sparse] / DRAWS * 100).toFixed(1)}% vs ${(SIZES[sparse] / total * 100).toFixed(2)}% proportional — ${lift.toFixed(0)}x`);
+
+  // Regression guard: year-first picking must not reintroduce repeats. Scoping
+  // the recent window per bucket once made a 2-photo year recycle its own tail.
+  const tight = { 2004: ['a'], 2008: ['b', 'c'], 2012: Array.from({ length: 400 }, (_, i) => `d${i}`) };
+  const recentT = [], shown = [];
+  for (let i = 0; i < 120; i++) {
+    const id = picker.pickFromBuckets(tight, { onWall: {}, lastShow: shown[shown.length - 1] || null, recentShown: recentT });
+    shown.push(id); recentT.push(id); if (recentT.length > 150) recentT.shift();
+  }
+  check('no photo repeats inside the history window', new Set(shown).size === shown.length,
+    `${shown.length} shows, ${new Set(shown).size} distinct`);
 
   // --- for contrast, a naive flat draw would be ~78% 2024
   const flat = [].concat(...years.map((y) => BUCKETS[y]));

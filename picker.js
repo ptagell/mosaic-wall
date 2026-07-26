@@ -10,19 +10,22 @@
 // Choosing the year first is also cheaper: the freshness filters run over one
 // bucket (~10k ids) instead of the whole 200k pool, on every tile swap.
 
-// The most recently shown ids drawn from `ids` (up to 75% of them). Scoped to
-// one year's bucket so the 75% budget is per-year rather than pool-wide.
+// The most recently shown ids drawn from `ids`, treated as too-recent to show.
 //
-// The max(1,…) matters: a real library has years holding a single photo, and
-// floor(1 * 0.75) is 0 — no cooldown at all, so that one photo would be picked
-// every time its year came up, roughly 1/N of all shows. With a floor of 1 the
-// photo cools down after showing, its year yields to another, and it resurfaces
-// only once it ages out of the global recent history. Sparse years stay
-// represented without any one photo dominating.
-function recentWindow(ids, recentShown) {
+// `limit` caps how many are protected. Default is 75% of `ids` — an escape valve
+// so a caller with nowhere else to go always has something left to show.
+//
+// Pass Infinity when the caller CAN go elsewhere. That distinction matters: the
+// 75% rule was written for a pool-wide window, where 75% of thousands of ids far
+// exceeded the ~150-deep history, so everything recent was protected in practice.
+// Applied per year bucket it means something else entirely — a 2-photo year
+// protects only 1, so showing P then Q leaves P showable again immediately, and
+// because year-first picking visits a 2-photo year as often as a 4000-photo one,
+// those two photos churn and reappear across the wall.
+function recentWindow(ids, recentShown, limit) {
   var inPool = {};
   for (var i = 0; i < ids.length; i++) { inPool[ids[i]] = true; }
-  var win = Math.max(1, Math.floor(ids.length * 0.75));
+  var win = (limit == null) ? Math.max(1, Math.floor(ids.length * 0.75)) : limit;
   var m = {}, n = 0;
   for (var j = recentShown.length - 1; j >= 0 && n < win; j--) {
     if (inPool[recentShown[j]] && !m[recentShown[j]]) { m[recentShown[j]] = true; n++; }
@@ -65,13 +68,13 @@ function normalise(opts) {
 
 // Candidates within one bucket: not on another tile, not this tile's current
 // photo, not recently shown. Identical rules to the pre-existing picker.
-function eligible(ids, opts) {
+function eligible(ids, opts, limit) {
   var free = [];
   for (var i = 0; i < ids.length; i++) {
     if (!opts.onWall[ids[i]] && ids[i] !== opts.lastShow) { free.push(ids[i]); }
   }
   if (!free.length) { return { fresh: [], free: free }; }
-  var recentW = recentWindow(ids, opts.recentShown);
+  var recentW = recentWindow(ids, opts.recentShown, limit);
   var fresh = [];
   for (var k = 0; k < free.length; k++) { if (!recentW[free[k]]) { fresh.push(free[k]); } }
   return { fresh: fresh, free: free };
@@ -106,7 +109,9 @@ function pickFromBuckets(buckets, opts) {
   if (!years.length) { return null; }
   var anyFree = null;
   for (var i = 0; i < years.length; i++) {
-    var e = eligible(buckets[years[i]] || [], opts);
+    // Infinity: a blocked year yields to the next rather than recycling its
+    // own tail. The stalest fallback below covers the all-years-exhausted case.
+    var e = eligible(buckets[years[i]] || [], opts, Infinity);
     if (e.fresh.length) { return pickFrom(e.fresh, opts.rand); }
     if (e.free.length && !anyFree) { anyFree = e.free; }
   }

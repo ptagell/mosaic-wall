@@ -78,21 +78,27 @@ function resolvePools(scene, config, tileIds, ctx) {
         if (filtered.length) { people = filtered; }
       }
       if (!people.length) { return { pools: shareAll(tileIds, fallback), info: { peopleCount: 0 } }; }
-      // round-robin assignment; only fetch each distinct person's photos once
-      var assign = {}, need = {};
-      tileIds.forEach(function (id, i) { var p = people[i % people.length]; assign[id] = p; need[p.id] = p; });
-      var pids = Object.keys(need);
+      // Fetch EVERY selected person, not just the first min(tiles, people). The
+      // old code built its fetch list by iterating tiles, so selecting more
+      // people than you had tiles silently dropped the extras — and with them
+      // whole decades, since the dropped people were the alphabetically-later
+      // ones. server.js rotates through `rotation.order` so all of them show.
+      var pids = people.map(function (p) { return p.id; });
       return Promise.all(pids.map(function (pid) { return photoIndex.personPool(pid); })).then(function (lists) {
         var byPid = {};
         pids.forEach(function (pid, i) { byPid[pid] = lists[i] || []; });
         var pools = {}, assignments = {};
-        tileIds.forEach(function (id) {
-          var p = assign[id];
+        tileIds.forEach(function (id, i) {
+          var p = people[i % people.length];
           pools[id] = byPid[p.id];
           assignments[id] = { id: p.id, name: p.name };
         });
         pools = fillBlanks(pools, tileIds, fallback);
-        return { pools: pools, info: { peopleCount: people.length, assignments: assignments } };
+        return {
+          pools: pools,
+          rotation: { order: pids, byPid: byPid, names: people },
+          info: { peopleCount: people.length, assignments: assignments }
+        };
       });
     });
   }
