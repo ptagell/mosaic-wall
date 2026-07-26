@@ -109,24 +109,48 @@ function idsFrom(items) {
   return out;
 }
 
-// CLIP smart search (POST /api/search/smart) — used for content scenes like
-// "landscapes" that aren't tied to a named person. Cached by query.
+// CLIP smart search (POST /api/search/smart), run once per year. "All results"
+// is meaningless for a relevance-ranked query — a broad prompt matches most of
+// the library — so instead of paginating we window by year. Relevance ordering
+// is preserved inside each year; the spread comes from the strata.
 const smartCache = {};
+const SMART_YEARS = parseInt(process.env.SMART_YEARS || '20', 10);
+const SMART_PER_YEAR = parseInt(process.env.SMART_PER_YEAR || '100', 10);
+
+function smartYear(query, year) {
+  return requestImpl('/api/search/smart', 'POST', {
+    query: query,
+    size: SMART_PER_YEAR,
+    type: 'IMAGE',
+    takenAfter: new Date(Date.UTC(year, 0, 1)).toISOString(),
+    takenBefore: new Date(Date.UTC(year + 1, 0, 1)).toISOString()
+  }).then(function (data) {
+    var items = (data && data.assets && data.assets.items) ? data.assets.items : [];
+    return idsFrom(items);
+  }).catch(function (err) {
+    console.error('[immich] smart "' + query + '" ' + year + ': ' + err.message);
+    return [];
+  });
+}
+
 function searchSmart(query) {
   var key = String(query || '');
   var now = Date.now();
   var cached = smartCache[key];
   if (cached && (now - cached.ts) < LIST_CACHE_TTL) { return Promise.resolve(cached.ids); }
-  return immichRequest('/api/search/smart', 'POST', { query: key, size: PAGE_SIZE, type: 'IMAGE' })
-    .then(function (data) {
-      var items = (data && data.assets && data.assets.items) ? data.assets.items : [];
-      var ids = idsFrom(items);
-      smartCache[key] = { ids: ids, ts: now };
-      return ids;
-    }).catch(function (err) {
-      console.error('[immich] smart search "' + key + '": ' + err.message);
-      return [];
-    });
+  var thisYear = new Date().getFullYear();
+  var years = [];
+  for (var y = thisYear; y > thisYear - SMART_YEARS; y--) { years.push(y); }
+  return Promise.all(years.map(function (yr) { return smartYear(key, yr); })).then(function (lists) {
+    var seen = {}, ids = [];
+    for (var i = 0; i < lists.length; i++) {
+      for (var j = 0; j < lists[i].length; j++) {
+        if (!seen[lists[i][j]]) { seen[lists[i][j]] = true; ids.push(lists[i][j]); }
+      }
+    }
+    smartCache[key] = { ids: ids, ts: now };
+    return ids;
+  });
 }
 
 // Named, non-hidden people as [{id,name}], sorted, cached.
