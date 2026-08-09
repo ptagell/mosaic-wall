@@ -229,6 +229,49 @@ function getAssetInfo(assetId) {
   return Promise.race([fetchP, timeoutP]).catch(function () { return { date: '', place: '' }; });
 }
 
+// --- "Frame favourites" album: tap-to-favourite target ---
+// Album id is cached for the process lifetime; the deleted-album retry below is
+// the invalidation path. Uses requestImpl so tests can drive it via _setRequest.
+const FAVOURITES_ALBUM = process.env.FAVOURITES_ALBUM || 'Frame favourites';
+let favAlbumId = null;
+
+function resolveFavAlbum() {
+  if (favAlbumId) { return Promise.resolve(favAlbumId); }
+  return requestImpl('/api/albums', 'GET').then(function (albums) {
+    var list = Array.isArray(albums) ? albums : [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].id && list[i].albumName === FAVOURITES_ALBUM) {
+        favAlbumId = list[i].id;
+        return favAlbumId;
+      }
+    }
+    return requestImpl('/api/albums', 'POST', { albumName: FAVOURITES_ALBUM }).then(function (created) {
+      favAlbumId = (created && created.id) || null;
+      if (!favAlbumId) { throw new Error('album create returned no id'); }
+      console.log('[immich] created album "' + FAVOURITES_ALBUM + '"');
+      return favAlbumId;
+    });
+  });
+}
+
+// Add one asset to the favourites album. Resolves true/false, never rejects.
+// Immich reports an already-present asset as error "duplicate" — that is success
+// here (add-only, idempotent). Any thrown failure (including a 404 from an album
+// deleted since caching) drops the cache and retries the whole flow once.
+function addToFavourites(assetId, retried) {
+  return resolveFavAlbum().then(function (albumId) {
+    return requestImpl('/api/albums/' + albumId + '/assets', 'PUT', { ids: [assetId] }).then(function (out) {
+      var r = Array.isArray(out) ? out[0] : null;
+      return !!(r && (r.success || r.error === 'duplicate'));
+    });
+  }).catch(function (err) {
+    favAlbumId = null;
+    if (!retried) { return addToFavourites(assetId, true); }
+    console.error('[immich] favourite ' + assetId + ': ' + err.message);
+    return false;
+  });
+}
+
 // Drop the list-level caches so the next scene resolve sees new uploads.
 // Per-asset caches (focus, info, takenAt) stay — those never go stale.
 function clearListCaches() {
@@ -304,6 +347,7 @@ module.exports = {
   getFocus: getFocus,
   getOnThisDay: getOnThisDay,
   getAssetInfo: getAssetInfo,
+  addToFavourites: addToFavourites,
   searchMetadata: searchMetadata,
   takenAt: takenAt,
   taken: taken,
