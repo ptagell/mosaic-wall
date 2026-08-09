@@ -934,6 +934,17 @@ wss.on('connection', function (ws) {
       send(ws, { type: 'timesync', t0: msg.t0, ts: Date.now() });
     } else if (msg.type === 'pong') {
       var t = tiles.get(deviceId); if (t) { t.lastSeen = Date.now(); }
+    } else if (msg.type === 'favourite') {
+      // add the photo on this tile's glass to the favourites album; the tile
+      // sends the id it is actually displaying (swaps can be scheduled ahead,
+      // so lastShow may already point at the next photo)
+      if (!deviceId) { return; }
+      if (typeof msg.id !== 'string' || msg.id.length > 64 || !/^[a-f0-9-]+$/i.test(msg.id)) { return; }
+      var fid = msg.id;
+      immich.addToFavourites(fid).then(function (ok) {
+        console.log('[mosaic] favourite ' + fid + ' from ' + deviceId + ': ' + (ok ? 'ok' : 'FAILED'));
+        send(ws, { type: 'favourited', id: fid, ok: !!ok });
+      });
     }
   });
   ws.on('close', function () {
