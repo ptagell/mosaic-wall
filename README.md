@@ -35,9 +35,16 @@ You run one server. It serves two pages:
 - **`/admin`** — the control panel. Pick what the whole wall is doing, arrange
   the tiles in space, tune the look, set a schedule.
 
+![The admin control panel: a row of scene buttons, a year-spread histogram
+showing how the library is distributed across 2004–2026, and playback settings
+for pace, moments, transition and Ken Burns](docs/images/server-options.png)
+
 Because the server knows where every tile is (you place them on a grid in the
 admin, much like arranging displays on a Mac), it can treat the wall as one
 surface rather than N independent frames.
+
+![Wall placement: three tiles dragged onto a grid to match their real
+arrangement, each labelled with its physical size in millimetres](docs/images/wall-placement.png)
 
 ### Scenes
 
@@ -64,8 +71,12 @@ The people scenes lean on Immich's face recognition, which does the hard part.
 - **Timing:** `sync` (all tiles together), `stagger`, or `wave` (a sweep across
   the wall — left-right, top-bottom, or diagonal).
 - **Effects:** `bokeh`, `snow`, `embers`, `stars`, `network`, `aurora`, `glass`.
-- **Art pieces:** `plasma`, `lava`, `kaleido`, `julia`, `tunnel`, `waves`,
-  `flow`, `phyllo`, `spiro`, `metaballs`.
+- **Art pieces:** plasma, lava lamp, kaleidoscope, fractal (Julia), tunnel, silk
+  waves, flow field, bloom (phyllotaxis), spirograph, lava blobs — pin one, or
+  cycle the lot.
+
+![The Art scene selected, with the artwork dropdown open listing all ten
+generative pieces](docs/images/art-mode.png)
 
 ### Tap to favourite
 
@@ -74,11 +85,18 @@ that adds it to an Immich album (`Frame favourites` by default, created on
 first use). With several screens showing the same library, curating a best-of
 album stops being a chore — anyone walking past can do it with one tap.
 
+![An iPad in a yellow 3D-printed frame showing a forest photo, with the tap
+panel open: the caption "16 May 2020 · Trentham, Australia" above a pink "Add to
+favourites" button](docs/images/tap-to-favourite.jpg)
+
 ### Schedule
 
 Scenes can change on a schedule, including a sleep window that blacks the
 screens overnight. Note that blacking the pixels does **not** turn off an LCD
 backlight — see [`docs/POWER.md`](docs/POWER.md) for what actually saves power.
+
+![Look and atmosphere controls — colour grade, vignette, night dim and particle
+overlays — above a day/evening/night schedule](docs/images/server-schedule.png)
 
 ## Requirements
 

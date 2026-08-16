@@ -23,6 +23,13 @@ Settings → Battery for the charging-rate difference over an hour.
 **Fix:** source flat adapters explicitly rated for 2.4A passthrough, or
 re-route so a full cable reaches the port directly.
 
+![A slimline right-angle Lightning adapter on a soldering mat, its red and black
+leads spliced to a USB-C tail](images/power-connectors.jpg)
+
+The slimline adapter above is the part under suspicion — soldering a USB-C tail
+onto one keeps the cable flush against the frame, but it is also where the
+current gets throttled.
+
 ## 2. Drop the backlight on a schedule
 
 The backlight is the single largest consumer. On each iPad, create two
