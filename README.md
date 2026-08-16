@@ -138,6 +138,16 @@ list. The ones that matter:
 | `PERSON_IDS` | *(all)* | Restrict people scenes to specific Immich person IDs. |
 | `SLIDE_INTERVAL` | `15000` | Milliseconds between photo changes. |
 
+Two things to know about `IMMICH_URL`:
+
+- **Include the port.** Immich defaults to `2283`. Omit it and the request goes
+  to port 80, which only works if Immich is behind a reverse proxy there.
+- **HTTPS is not supported.** The Immich client uses Node's `http` module only,
+  so an `https://` URL fails at startup with `ERR_INVALID_PROTOCOL`. Point it at
+  the plain-HTTP address of Immich on your own network. This is a LAN tool (see
+  [Security](#security)), so that's usually the same address anyway — but if you
+  only reach Immich over TLS, this won't work for you as written.
+
 ## Setting up the iPads
 
 A few settings make an old iPad behave like an appliance rather than a tablet:
