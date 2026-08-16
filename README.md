@@ -9,7 +9,7 @@ can download on [MakerWorld][makerworld]. You don't need the frames to use this;
 any old tablet propped up somewhere will do.
 
 [post]: https://tagell.com/reframing-old-ipads
-[makerworld]: https://makerworld.com/
+[makerworld]: https://makerworld.com/en/models/3178175-ipad-5-and-ipad-mini-2-photo-frame-stand#profileId-3594202
 
 ## Why this exists
 
