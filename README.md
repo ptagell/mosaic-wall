@@ -136,7 +136,7 @@ list. The ones that matter:
 | `TZ` | `UTC` | Timezone for the schedule feature. |
 | `FAVOURITES_ALBUM` | `Frame favourites` | Album that tap-to-favourite writes to. |
 | `PERSON_IDS` | *(all)* | Restrict people scenes to specific Immich person IDs. |
-| `SLIDE_INTERVAL` | `15000` | Milliseconds between photo changes. |
+| `SMART_YEARS` | `20` | How far back the time-spread selection reaches, in years. |
 
 Two things to know about `IMMICH_URL`:
 
@@ -147,6 +147,38 @@ Two things to know about `IMMICH_URL`:
   the plain-HTTP address of Immich on your own network. This is a LAN tool (see
   [Security](#security)), so that's usually the same address anyway — but if you
   only reach Immich over TLS, this won't work for you as written.
+
+Most day-to-day settings are **not** environment variables. Which scene is
+running, how often photos change, the look, the transition, the timing mode and
+the sleep schedule are all set live in the admin UI and persisted to
+`data/registry.json`.
+
+### Advanced tuning
+
+These have sensible defaults and are listed for completeness — you shouldn't
+normally need any of them.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SMART_PER_YEAR` | `100` | Candidate photos pulled per year by time-spread selection. |
+| `RECENT_CAP` | `150` | How many recently-shown photos to avoid repeating. |
+| `LANDSCAPE_QUERY` | *(see `.env.example`)* | CLIP query behind the Landscapes scene. |
+| `PAGE_SIZE` | `1000` | Assets per Immich API page. Lower it if the initial scan strains Immich. |
+| `LIST_CACHE_TTL` | `600000` | Immich list-response cache TTL, in ms. |
+| `POOL_REFRESH_MS` | `3600000` | Photo pool refresh interval, in ms. |
+| `FULL_RESCAN_MS` | `86400000` | Full library rescan interval, in ms. |
+| `INDEX_WRITE_DEBOUNCE_MS` | `300000` | Debounce before writing `photo-index.json`, in ms. |
+| `SLIDE_JITTER` | `0.3` | Per-tile randomisation of the interval (0–0.9), so tiles don't swap in lockstep. |
+| `LEAD_MS` | `1100` | Preload window before a synchronised swap, in ms. |
+| `STALE_MS` | `20000` | Drop a tile as half-open after this long without a pong, in ms. |
+| `WAVE_SPAN` | `1400` | Sweep duration across the wall in `wave` timing, in ms. |
+| `SPOT_INTERVAL` | `4500` | Spotlight hop cadence, in ms. |
+| `MIRROR_MIN_MS` | `140` | Minimum gap between frames in Mirror mode, in ms. |
+| `SLIDE_INTERVAL` | `15000` | **First-boot seed only** for the slide interval. Once `data/registry.json` exists the admin UI owns this value and the variable is ignored. |
+
+(`DEMO_INTERVAL` is a legacy alias that overrides `SLIDE_INTERVAL` if set, and
+`MOSAIC_PORT` is only read by the `_live.mjs` test scripts. Neither is worth
+setting.)
 
 ## Setting up the iPads
 
@@ -171,10 +203,10 @@ measurements and the fixes.
 
 ### Recommended settings
 
-Turn the slide interval **up**. A wall that changes every fifteen seconds is
-restless and pulls your eye all day; one that changes every few minutes lets
-you actually notice and enjoy a photo. Longer intervals are also easier on the
-battery.
+Turn the slide interval **up** — the slider in the admin UI, not the env var. A
+wall that changes every fifteen seconds is restless and pulls your eye all day;
+one that changes every few minutes lets you actually notice and enjoy a photo.
+Longer intervals are also easier on the battery.
 
 ## Security
 
