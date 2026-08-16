@@ -748,9 +748,10 @@ function sceneSnapshot() {
 const server = http.createServer(function (req, res) {
   var u = url.parse(req.url, true);
   var p = u.pathname;
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // No CORS headers on purpose. Tiles, admin and camera are all served from this
+  // same origin, so nothing here needs cross-origin access — and the admin API has
+  // no auth, so a wildcard Allow-Origin would let any page a LAN browser happens to
+  // load drive the whole wall and read the responses back.
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   if (p === '/' || p === '/tile' || p === '/tile.html') { return serveFile(res, 'tile.html', 'text/html; charset=utf-8'); }

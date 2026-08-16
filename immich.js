@@ -4,7 +4,7 @@
 const http = require('http');
 const url = require('url');
 
-const IMMICH_URL = (process.env.IMMICH_URL || 'http://10.0.0.146:2283').replace(/\/+$/, '');
+const IMMICH_URL = (process.env.IMMICH_URL || 'http://localhost:2283').replace(/\/+$/, '');
 const API_KEY = process.env.IMMICH_API_KEY;
 const PAGE_SIZE = parseInt(process.env.PAGE_SIZE || '1000', 10);
 const PERSON_IDS = (process.env.PERSON_IDS || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);

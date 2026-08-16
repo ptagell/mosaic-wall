@@ -6,11 +6,11 @@ services:
     ports:
       - "4000:4000"
     environment:
-      - IMMICH_URL=${IMMICH_URL:-http://10.0.0.146:2283}
+      - IMMICH_URL=${IMMICH_URL:-http://localhost:2283}
       - IMMICH_API_KEY=${IMMICH_API_KEY}
       - PERSON_IDS=${PERSON_IDS}
       - PORT=4000
       - DATA_DIR=/app/data
-      - TZ=${TZ:-Australia/Melbourne}
+      - TZ=${TZ:-UTC}
     volumes:
       - ./data:/app/data

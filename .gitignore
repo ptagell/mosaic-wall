@@ -1,6 +1,7 @@
 # secrets — the Immich API key lives here; never commit
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 

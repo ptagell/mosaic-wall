@@ -1935,9 +1935,12 @@ git commit -m "test: live end-to-end year-spread verification"
 
 ---
 
-### Task 10: Deploy to thorg
+### Task 10: Deploy to the frame host
 
 **Files:** none — deployment only
+
+Set `FRAME_HOST` to the machine running Immich (an SSH alias or address) before
+running the commands below: `export FRAME_HOST=my-server`.
 
 - [ ] **Step 1: Full pre-deploy gate**
 
@@ -1959,7 +1962,7 @@ Expected: `clean`. (`bin/rubocop`, `bin/brakeman` etc. from the global config do
 - [ ] **Step 2: Confirm the target is reachable**
 
 ```bash
-ssh thorg 'hostname && docker --version && ls -d ~/mosaic_wall'
+ssh "$FRAME_HOST" 'hostname && docker --version && ls -d ~/mosaic_wall'
 ```
 
 If this fails, stop and resolve connectivity before going further — do not partially deploy.
@@ -1967,26 +1970,26 @@ If this fails, stop and resolve connectivity before going further — do not par
 - [ ] **Step 3: Ship the code**
 
 ```bash
-ssh thorg 'cd ~/mosaic_wall && git pull'
+ssh "$FRAME_HOST" 'cd ~/mosaic_wall && git pull'
 ```
 
 If the host has no git remote configured, sync directly instead:
 
 ```bash
 rsync -av --exclude node_modules --exclude data --exclude .git \
-  ./ thorg:~/mosaic_wall/
+  ./ "$FRAME_HOST":~/mosaic_wall/
 ```
 
 - [ ] **Step 4: Rebuild and restart**
 
 ```bash
-ssh thorg 'cd ~/mosaic_wall && docker compose up -d --build'
+ssh "$FRAME_HOST" 'cd ~/mosaic_wall && docker compose up -d --build'
 ```
 
 - [ ] **Step 5: Watch the first scan**
 
 ```bash
-ssh thorg 'cd ~/mosaic_wall && docker compose logs -f --tail=50 mosaic-wall'
+ssh "$FRAME_HOST" 'cd ~/mosaic_wall && docker compose logs -f --tail=50 mosaic-wall'
 ```
 
 Expected within a few minutes:
@@ -1995,12 +1998,12 @@ Expected within a few minutes:
 - eventually a `photo-index.json` in `data/`:
 
 ```bash
-ssh thorg 'ls -lh ~/mosaic_wall/data/photo-index.json'
+ssh "$FRAME_HOST" 'ls -lh ~/mosaic_wall/data/photo-index.json'
 ```
 
 - [ ] **Step 6: Confirm the spread on the real library**
 
-Open the admin at `http://thorg:4000/admin` and check the Year spread panel shows bars across the full history, not one or two recent years.
+Open the admin at `http://$FRAME_HOST:4000/admin` and check the Year spread panel shows bars across the full history, not one or two recent years.
 
 ---
 
@@ -2009,7 +2012,7 @@ Open the admin at `http://thorg:4000/admin` and check the Year spread panel show
 The index is additive — no schema migration, no destructive change to `registry.json`.
 
 ```bash
-ssh thorg 'cd ~/mosaic_wall && git checkout <previous-sha> && docker compose up -d --build'
+ssh "$FRAME_HOST" 'cd ~/mosaic_wall && git checkout <previous-sha> && docker compose up -d --build'
 ```
 
 `data/photo-index.json` can be left in place (the old code ignores it) or deleted; either is safe.
