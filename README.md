@@ -8,10 +8,8 @@ iPads][post]** — the other half is a set of 3D-printed iPad stands, which you
 can download on [MakerWorld][makerworld]. You don't need the frames to use this;
 any old tablet propped up somewhere will do.
 
-[post]: https://example.com/reframing-old-ipads
+[post]: https://tagell.com/reframing-old-ipads
 [makerworld]: https://makerworld.com/
-
-> **Replace the two links above** with the published post and model URLs.
 
 ## Why this exists
 
